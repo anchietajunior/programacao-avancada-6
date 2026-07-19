@@ -12,12 +12,17 @@ app = FastAPI()
 
 
 class BookCreate(BaseModel):
-    name: str
+    title: str
+    pages: int
 
 
-class Book(BaseModel):
+class BookRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
-    name: str
+    title: str
+    pages: int
+    user_id: int
 
 
 class UserCreate(BaseModel):
@@ -42,59 +47,58 @@ def get_db():
         db.close()
 
 
-books = [
-    {"id": 1, "name": "Dom Casmurro"},
-    {"id": 2, "name": "O Hobbit"},
-    {"id": 3, "name": "Clean Code"},
-]
-next_book_id = 4
-
-
 @app.get("/health")
 def read_health():
     return {"status": "Ok"}
 
 
-@app.get("/api/books", response_model=list[Book])
-def list_books(name: str = ""):
-    if name == "":
-        return books
-    return [book for book in books if name.lower() in book["name"].lower()]
-
-
-@app.get("/api/books/{book_id}", response_model=Book)
-def read_book(book_id: int):
-    for book in books:
-        if book["id"] == book_id:
-            return book
-    raise HTTPException(status_code=404, detail="Book not found")
-
-
-@app.post("/api/books", response_model=Book, status_code=201)
-def create_book(book: BookCreate):
-    global next_book_id
-    new_book = {"id": next_book_id, "name": book.name}
-    next_book_id += 1
-    books.append(new_book)
+@app.post("/users/{user_id}/books", response_model=BookRead, status_code=201)
+def create_book(user_id: int, book: BookCreate, db: Session = Depends(get_db)):
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_book = models.Book(title=book.title, pages=book.pages, user_id=user_id)
+    db.add(new_book)
+    db.commit()
+    db.refresh(new_book)
     return new_book
 
 
-@app.put("/api/books/{book_id}", response_model=Book)
-def update_book(book_id: int, book: BookCreate):
-    for stored_book in books:
-        if stored_book["id"] == book_id:
-            stored_book["name"] = book.name
-            return stored_book
-    raise HTTPException(status_code=404, detail="Book not found")
+@app.get("/users/{user_id}/books", response_model=list[BookRead])
+def list_books(user_id: int, db: Session = Depends(get_db)):
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user.books
 
 
-@app.delete("/api/books/{book_id}", status_code=204)
-def delete_book(book_id: int):
-    for book in books:
-        if book["id"] == book_id:
-            books.remove(book)
-            return
-    raise HTTPException(status_code=404, detail="Book not found")
+@app.get("/books/{book_id}", response_model=BookRead)
+def read_book(book_id: int, db: Session = Depends(get_db)):
+    book = db.get(models.Book, book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return book
+
+
+@app.put("/books/{book_id}", response_model=BookRead)
+def update_book(book_id: int, book: BookCreate, db: Session = Depends(get_db)):
+    stored_book = db.get(models.Book, book_id)
+    if stored_book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    stored_book.title = book.title
+    stored_book.pages = book.pages
+    db.commit()
+    db.refresh(stored_book)
+    return stored_book
+
+
+@app.delete("/books/{book_id}", status_code=204)
+def delete_book(book_id: int, db: Session = Depends(get_db)):
+    book = db.get(models.Book, book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    db.delete(book)
+    db.commit()
 
 
 @app.post("/signup", response_model=UserRead, status_code=201)

@@ -30,12 +30,12 @@ Abra http://127.0.0.1:8000
 | Método | Rota | O que faz |
 | ------ | ---- | --------- |
 | GET | /health | Verifica se a API está no ar |
-| GET | /api/books | Lista os livros; query param opcional name busca pelo nome |
-| GET | /api/books/{book_id} | Um livro pelo id (404 se não existir) |
-| POST | /api/books | Cria um livro; corpo validado pelo schema BookCreate |
-| PUT | /api/books/{book_id} | Atualiza o nome de um livro (404 se não existir) |
-| DELETE | /api/books/{book_id} | Remove um livro; responde 204 sem corpo (404 se não existir) |
 | POST | /signup | Cadastra um User; e-mail repetido responde 409 |
+| GET | /users/{user_id}/books | Lista os Books de um User (404 se o User não existir) |
+| POST | /users/{user_id}/books | Cria um Book para um User; corpo com title e pages |
+| GET | /books/{book_id} | Um Book pelo id (404 se não existir) |
+| PUT | /books/{book_id} | Atualiza title e pages de um Book (404 se não existir) |
+| DELETE | /books/{book_id} | Remove um Book; responde 204 sem corpo (404 se não existir) |
 
 A documentação interativa (Swagger) fica em http://127.0.0.1:8000/docs
 
