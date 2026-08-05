@@ -20,6 +20,8 @@ Abra http://127.0.0.1:8000
 | GET | /api/books | Lista os livros; query param opcional name busca pelo nome |
 | GET | /api/books/{book_id} | Um livro pelo id (404 se não existir) |
 | POST | /api/books | Cria um livro na lista em memória |
+| PUT | /api/books/{book_id} | Substitui o nome de um livro (404 se não existir) |
+| DELETE | /api/books/{book_id} | Remove um livro; responde 204 sem corpo |
 
 A documentação interativa (Swagger) fica em http://127.0.0.1:8000/docs
 

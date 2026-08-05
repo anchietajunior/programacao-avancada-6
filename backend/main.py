@@ -63,3 +63,29 @@ def create_book(book: dict):
     # Guarda na lista em memória e devolve o livro criado
     books.append(new_book)
     return new_book
+
+
+# Atualiza um livro existente; PUT substitui a representação inteira
+@app.put("/api/books/{book_id}")
+def update_book(book_id: int, book: dict):
+    # Procura o livro pedido na lista
+    for stored_book in books:
+        if stored_book.id == book_id:
+            # O objeto é mutável: trocamos o atributo, sem recriar nada
+            stored_book.name = book["name"]
+            return stored_book
+    # Não achou: responde 404, igual ao GET por id
+    raise HTTPException(status_code=404, detail="Book not found")
+
+
+# Remove um livro; 204 = deu certo e não há corpo para devolver
+@app.delete("/api/books/{book_id}", status_code=204)
+def delete_book(book_id: int):
+    # Procura o livro pedido na lista
+    for book in books:
+        if book.id == book_id:
+            books.remove(book)
+            # return sem valor: o 204 proíbe corpo na resposta
+            return
+    # Não achou: responde 404
+    raise HTTPException(status_code=404, detail="Book not found")
