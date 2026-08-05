@@ -349,16 +349,45 @@ def read_health():
 
 <section>
   <h2>O primeiro recurso do projeto: Books</h2>
+  <p style="font-size:.8em">Dicionário ou classe? A decisão de hoje é a que a aula 04 vai cobrar.</p>
+  <ul style="font-size:.7em">
+    <li><code>{"id": 1, "name": "..."}</code> aceita qualquer chave, não garante campo nenhum;</li>
+    <li>Uma <strong>classe</strong> dá nome ao conceito e concentra num lugar só o que é um Book;</li>
+    <li>É a POO da aula 01.2 entrando no projeto — e o mesmo desenho que o ORM vai usar.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>O modelo Book</h2>
+  <pre><code class="language-python" data-trim>
+class Book:
+    def __init__(self, id: int, name: str):
+        self.id = id
+        self.name = name
+
+    def __repr__(self):
+        return f"Book(id={self.id}, name={self.name!r})"
+  </code></pre>
+  <ul style="font-size:.65em">
+    <li><code>__init__</code> é o <strong>único portão de entrada</strong>: não existe Book sem <code>id</code> e sem <code>name</code>;</li>
+    <li><code>__repr__</code>: o objeto se apresenta legível no terminal, em vez de <code>&lt;Book object at 0x104...&gt;</code>;</li>
+    <li>Nada aqui é FastAPI — é Python puro. A escolha é <em>nossa</em>, de modelagem.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>A coleção: uma lista de objetos</h2>
   <pre><code class="language-python" data-trim>
 books = [
-    {"id": 1, "name": "Dom Casmurro"},
-    {"id": 2, "name": "O Hobbit"},
-    {"id": 3, "name": "Clean Code"},
+    Book(id=1, name="Dom Casmurro"),
+    Book(id=2, name="O Hobbit"),
+    Book(id=3, name="Clean Code"),
 ]
   </code></pre>
-  <ul style="font-size:.7em">
-    <li>Uma lista Python em memória — o "banco" provisório;</li>
-    <li>As rotas do sistema ganham o prefixo <code>/api</code>: quando o React chegar, API e tela não se misturam.</li>
+  <ul style="font-size:.68em">
+    <li>O "banco" provisório — em memória, mas já com forma;</li>
+    <li>A classe vira <strong>tabela</strong>, cada objeto vira <strong>linha</strong>, a lista vira o resultado de um <code>SELECT</code>;</li>
+    <li>As rotas ganham o prefixo <code>/api</code>: quando o React chegar, API e tela não se misturam.</li>
   </ul>
 </section>
 
@@ -369,9 +398,11 @@ books = [
 def list_books():
     return books
   </code></pre>
-  <ul style="font-size:.7em">
+  <ul style="font-size:.65em">
     <li>A rota mais simples do recurso: devolve todos;</li>
-    <li>A lista de dicionários vira JSON sozinha — trabalho do framework.</li>
+    <li>Devolvemos <strong>objetos</strong>, e mesmo assim saiu JSON — sem uma linha de conversão;</li>
+    <li>O FastAPI não reconhece o tipo, então lê os <strong>atributos da instância</strong> (por baixo, um <code>vars(objeto)</code>);</li>
+    <li>Conveniência do framework adivinhando — <em>não</em> um contrato. Guarde o incômodo: <code>response_model</code>, aula 03.</li>
   </ul>
 </section>
 
@@ -383,12 +414,13 @@ from fastapi import FastAPI, HTTPException
 @app.get("/api/books/{book_id}")
 def read_book(book_id: int):
     for book in books:
-        if book["id"] == book_id:
+        if book.id == book_id:
             return book
     raise HTTPException(status_code=404, detail="Book not found")
   </code></pre>
-  <ul style="font-size:.6em">
+  <ul style="font-size:.58em">
     <li>O <code>{book_id}</code> do caminho vira o argumento da função — mesmo nome, obrigatório, tipado (<code>int</code>);</li>
+    <li><code>book.id</code>, e não <code>book["id"]</code>: acesso por <strong>atributo</strong> — é o objeto respondendo;</li>
     <li><code>/api/books/abc</code> → <strong>422</strong>: validação de graça, nossa função nem rodou;</li>
     <li>Livro não existe? <em>Nós</em> escolhemos o status: <code>/api/books/99</code> → <strong>404</strong> com mensagem nossa.</li>
   </ul>
@@ -402,7 +434,7 @@ def read_book(book_id: int):
 def list_books(name: str = ""):
     if name == "":
         return books
-    return [book for book in books if name.lower() in book["name"].lower()]
+    return [book for book in books if name.lower() in book.name.lower()]
   </code></pre>
   <ul style="font-size:.65em">
     <li><code>name</code> não está no caminho → <strong>query param</strong>: <code>/api/books?name=hobbit</code>;</li>
@@ -419,7 +451,8 @@ def list_books(name: str = ""):
     <li>As três rotas listadas sem uma linha de documentação escrita;</li>
     <li>Parâmetros, tipos e defaults vieram <strong>da assinatura das funções</strong>;</li>
     <li><strong>Try it out</strong>: o Swagger é um cliente HTTP, como o navegador e o curl;</li>
-    <li>O 422 já aparece documentado como resposta possível.</li>
+    <li>O 422 já aparece documentado como resposta possível;</li>
+    <li><strong>Mas repare no que falta:</strong> o exemplo da resposta de sucesso está vazio — ninguém declarou que a rota devolve um <code>Book</code>. Gancho do <code>response_model</code>, aula 03.</li>
   </ul>
   <p style="font-size:.6em;margin-top:.6em">Em produção muitas equipes restringem o <code>/docs</code>; aqui ele fica aberto — é ferramenta de ensino.</p>
   <p class="cite">Documentação oficial do FastAPI — fastapi.tiangolo.com</p>
@@ -430,15 +463,31 @@ def list_books(name: str = ""):
   <pre><code class="language-python" data-trim>
 @app.post("/api/books", status_code=201)
 def create_book(book: dict):
-    new_book = {"id": len(books) + 1, "name": book["name"]}
+    new_book = Book(id=len(books) + 1, name=book["name"])
     books.append(new_book)
     return new_book
   </code></pre>
-  <ul style="font-size:.6em">
+  <ul style="font-size:.58em">
     <li>Os dados viajam no <strong>corpo</strong> da requisição — e a barra do navegador só faz GET: teste pelo Swagger;</li>
+    <li><strong>Entra dicionário, sai <code>Book</code></strong>: o dado só vira objeto ao passar pelo <code>Book(...)</code>. O dict cru existe apenas na <em>fronteira</em>;</li>
     <li><code>201 Created</code> — direto da tabela de status codes de hoje;</li>
-    <li><code>book: dict</code> é cru, sem validação (POST sem <code>name</code> → <strong>500</strong>!) — o Pydantic fecha esse buraco na aula 03;</li>
     <li>Reinicie o servidor: o livro criado <strong>some</strong> — memória morre com o processo; banco de dados na aula 04.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>A classe não salvou a pátria</h2>
+  <p style="font-size:.8em">POST sem o campo <code>name</code> → <strong>500</strong></p>
+  <pre><code class="language-python" data-trim>
+    new_book = Book(id=len(books) + 1, name=book["name"])
+                                            ^^^^^^^^^^^^^
+                                            KeyError: 'name'
+  </code></pre>
+  <ul style="font-size:.65em">
+    <li>Temos uma classe <code>Book</code>. Por que ela não impediu o erro?</li>
+    <li>Porque ninguém <strong>chamou</strong> a classe antes de acessar o dicionário cru;</li>
+    <li>A classe protege o que já está <em>dentro</em> do sistema — <strong>não vigia a porta de entrada</strong>;</li>
+    <li>Validar é trabalho da borda. É esse buraco que o <strong>Pydantic</strong> fecha na aula 03.</li>
   </ul>
 </section>
 
@@ -477,18 +526,19 @@ def create_book(book: dict):
     <li>4xx: culpa do cliente. 5xx: culpa do servidor;</li>
     <li>uvicorn traduz bytes ↔ Python; FastAPI decide quem responde;</li>
     <li>Path params <em>identificam</em>; query params <em>ajustam</em> — com validação de tipos de graça;</li>
-    <li>O recurso <strong>Books</strong> nasceu em memória: listar, buscar, obter pelo id, criar via POST.</li>
+    <li>O recurso <strong>Books</strong> nasceu em memória <strong>como classe e lista de objetos</strong>: listar, buscar, obter pelo id, criar via POST;</li>
+    <li>Modelo dentro, dicionário cru só na fronteira — e a fronteira ainda está desprotegida.</li>
   </ul>
 </section>
 
 <section>
   <h2>Semana que vem: REST de verdade</h2>
-  <p style="font-size:.8em">Hoje o recurso Books nasceu — mas fizemos tudo no instinto.</p>
+  <p style="font-size:.8em">Hoje o recurso Books ganhou um modelo — mas a fronteira ainda é no instinto.</p>
   <ul style="font-size:.75em">
     <li><strong>REST</strong>: o estilo que organiza verbos e URIs;</li>
     <li>Desenhar os recursos do projeto (users, books) e completar o CRUD;</li>
-    <li>Schemas <strong>Pydantic</strong> no lugar do dict cru do POST;</li>
-    <li>E os dados que somem a cada restart? Banco de dados, aula 04.</li>
+    <li>Promover nossa classe <code>Book</code> a schema <strong>Pydantic</strong>: a mesma classe, com validação na entrada e contrato na saída;</li>
+    <li>E os dados que somem a cada restart? Banco de dados, aula 04 — onde essa mesma classe vira tabela.</li>
   </ul>
 </section>
 
