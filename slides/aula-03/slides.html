@@ -43,23 +43,274 @@
 </section>
 
 <section>
-  <h2>Revisão — o estado do projeto</h2>
-  <p style="font-size:.7em">O recurso <strong>Books</strong> reside em uma lista em memória, com quatro rotas: <code>GET /health</code>, <code>GET /api/books</code> (filtro <code>?name=</code>), <code>GET /api/books/{book_id}</code> e <code>POST /api/books</code> recebendo um dicionário sem validação.</p>
-  <p style="font-size:.7em;text-align:left;margin-top:.8em">Duas limitações deixadas em aberto deliberadamente:</p>
-  <ul style="font-size:.7em">
-    <li>POST sem o campo <code>name</code> → <strong>500</strong>: o cliente enviou dados errados, mas a falha ocorreu no servidor;</li>
-    <li>A geração de ids por <code>len(books) + 1</code> — frágil diante de remoções.</li>
+  <h2>O ponto de partida</h2>
+  <pre><code class="language-python" data-trim>
+books = [
+    {"id": 1, "name": "Dom Casmurro"},
+    {"id": 2, "name": "O Hobbit"},
+    {"id": 3, "name": "Clean Code"},
+]
+  </code></pre>
+  <p style="font-size:.62em;text-align:left">Quatro rotas sobre essa lista: <code>GET /health</code>, <code>GET /api/books</code> (filtro <code>?name=</code>), <code>GET /api/books/{book_id}</code> e <code>POST /api/books</code>, que recebe um dicionário sem validação. <strong>Dois defeitos:</strong></p>
+  <ul style="font-size:.62em">
+    <li>POST sem o campo <code>name</code> responde <strong>500</strong>: o cliente enviou dados errados, mas a falha ocorreu no servidor;</li>
+    <li>O id vem de <code>len(books) + 1</code> — e não existe rota para remover um livro.</li>
   </ul>
 </section>
 
 <section>
   <h2>Objetivos da aula</h2>
-  <ul style="font-size:.75em">
+  <ul style="font-size:.7em">
+    <li><span class="tema-badge">T-3</span> Definir o que é uma <strong>API</strong> e o que ela oculta;</li>
     <li><span class="tema-badge">T-3</span> Identificar os componentes de uma <strong>URI</strong>;</li>
     <li><span class="tema-badge">T-3</span> Explicar <strong>REST</strong>: origem, definição, recursos, representações e verbos;</li>
-    <li>Desenhar o <strong>mapa de rotas</strong> do Reading Tracker;</li>
-    <li>Validar entrada e saída com schemas <strong>Pydantic</strong>;</li>
-    <li>Completar o CRUD de Books com PUT e DELETE.</li>
+    <li>Modelar o recurso Book como <strong>classe</strong> e manter a coleção como lista de objetos;</li>
+    <li>Completar o CRUD de Books com <strong>DELETE</strong> e <strong>PUT</strong>, com geração de ids defensável;</li>
+    <li>Validar a entrada das rotas com um schema <strong>Pydantic</strong>.</li>
+  </ul>
+</section>
+
+<!-- ============ Bloco 1 — o recurso vira objeto ============ -->
+
+<section>
+  <h2>Dicionário ou classe?</h2>
+  <div class="duas-colunas" style="font-size:.62em">
+    <div>
+      <p><strong>Dicionário</strong></p>
+      <ul>
+        <li>Aceita qualquer chave, inclusive digitada errada;</li>
+        <li>Não garante campo algum;</li>
+        <li>O conhecimento sobre "o que é um livro" fica espalhado pelo arquivo.</li>
+      </ul>
+    </div>
+    <div>
+      <p><strong>Classe</strong></p>
+      <ul>
+        <li>Um único ponto de entrada — <code>__init__</code>;</li>
+        <li>Concentra a definição do conceito;</li>
+        <li>Um objeto tem identidade e um conjunto fixo de atributos.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="nota">A escolha não é estética: uma classe é a mesma estrutura que um ORM usa para mapear objetos em tabelas de um banco de dados.</div>
+</section>
+
+<section>
+  <h2>O modelo Book</h2>
+  <pre><code class="language-python" data-trim>
+class Book:
+    def __init__(self, id: int, name: str):
+        self.id = id
+        self.name = name
+
+    def __repr__(self):
+        return f"Book(id={self.id}, name={self.name!r})"
+  </code></pre>
+  <ul style="font-size:.6em">
+    <li><code>__init__</code> é o único portão de entrada: não existe Book sem <code>id</code> e sem <code>name</code>;</li>
+    <li><code>__repr__</code> define como o objeto se apresenta ao ser impresso: ao depurar, exibe um livro legível;</li>
+    <li>Nada aqui é FastAPI: é Python puro. A escolha é de <strong>modelagem</strong>, não do framework.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>A coleção passa a guardar objetos</h2>
+  <pre><code class="language-python" data-trim>
+books = [
+    Book(id=1, name="Dom Casmurro"),
+    Book(id=2, name="O Hobbit"),
+    Book(id=3, name="Clean Code"),
+]
+  </code></pre>
+  <pre><code class="language-python" data-trim>
+@app.get("/api/books/{book_id}")
+def read_book(book_id: int):
+    for book in books:
+        if book.id == book_id:
+            return book
+    raise HTTPException(status_code=404, detail="Book not found")
+  </code></pre>
+  <p style="font-size:.6em">Onde havia chave de dicionário, agora há <strong>atributo de objeto</strong>: <code>book.id</code>, <code>book.name</code>.</p>
+  <div class="nota">A classe corresponde a uma tabela, cada objeto a uma linha e a lista ao resultado de um <code>SELECT</code>: é esse o mapeamento que um ORM automatiza.</div>
+</section>
+
+<section>
+  <h2>Objetos viram JSON — sem contrato declarado</h2>
+  <pre><code class="language-json" data-trim>
+[{"id":1,"name":"Dom Casmurro"}, {"id":2,"name":"O Hobbit"}]
+  </code></pre>
+  <ul style="font-size:.65em">
+    <li>A rota devolve objetos <code>Book</code>, não dicionários — e ainda assim a resposta sai em JSON;</li>
+    <li>O FastAPI, ao não reconhecer o tipo, inspeciona os <strong>atributos da instância</strong> e monta o JSON a partir deles;</li>
+    <li>Funciona, mas é o framework <em>inferindo</em>: nada foi declarado sobre o formato da resposta.</li>
+  </ul>
+  <div class="nota">A inferência acerta enquanto todo atributo do objeto puder ser publicado. Declarar a saída só passa a valer a pena quando o objeto guardar algo que não deve sair.</div>
+</section>
+
+<section>
+  <h2>O POST passa a construir um objeto</h2>
+  <pre><code class="language-python" data-trim>
+@app.post("/api/books", status_code=201)
+def create_book(book: dict):
+    new_book = Book(id=len(books) + 1, name=book["name"])
+    books.append(new_book)
+    return new_book
+  </code></pre>
+  <ul style="font-size:.62em">
+    <li><strong>Entra dicionário, sai Book</strong>: o dado do cliente só se torna objeto ao passar pelo <code>Book(...)</code>;</li>
+    <li>Dentro do sistema circulam apenas objetos; o dicionário cru existe só na fronteira;</li>
+    <li>O parâmetro continua <code>book: dict</code> — POST com corpo <code>{}</code> ainda responde <strong>500</strong>.</li>
+  </ul>
+  <div class="nota">A classe protege o que já está dentro do sistema; ela não vigia a porta de entrada. Validar é trabalho da borda.</div>
+</section>
+
+<section>
+  <h2>Remoção: DELETE /api/books/{book_id}</h2>
+  <pre><code class="language-python" data-trim>
+@app.delete("/api/books/{book_id}", status_code=204)
+def delete_book(book_id: int):
+    for book in books:
+        if book.id == book_id:
+            books.remove(book)
+            return
+    raise HTTPException(status_code=404, detail="Book not found")
+  </code></pre>
+  <ul style="font-size:.6em">
+    <li><strong>204 No Content</strong>: a operação teve êxito e não há conteúdo a devolver;</li>
+    <li>O <code>return</code> vazio não é descuido — o 204 <em>proíbe</em> corpo na resposta;</li>
+    <li>Recurso inexistente → o mesmo <strong>404</strong> do GET por id: a resposta não muda com o verbo.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>200 e 204, lado a lado</h2>
+  <pre><code class="language-http" data-trim>
+GET /api/books/2           DELETE /api/books/1
+HTTP/1.1 200 OK            HTTP/1.1 204 No Content
+server: uvicorn            server: uvicorn
+content-length: 26         (não existe)
+
+{"id":2,...}               (nada)
+  </code></pre>
+  <ul style="font-size:.62em">
+    <li>O 200 informa <code>content-length</code>; o 204 não tem corpo para medir;</li>
+    <li>DELETE repetido no mesmo id → <strong>404</strong>: o estado do servidor é o mesmo, apenas o status muda.</li>
+  </ul>
+  <p class="cite">Verificável com <code>curl -i</code> · RFC 9110 — HTTP Semantics, IETF, 2022</p>
+</section>
+
+<section>
+  <h2>Remoções quebram a geração de ids</h2>
+  <pre><code class="language-text" data-trim>
+DELETE /api/books/2            → 204  (restam ids 1 e 3; len = 2)
+POST   {"name": "Refactoring"} → id = len(books) + 1 = 3 ... já existe
+GET    /api/books              → dois livros com id 3
+GET    /api/books/3            → devolve "Clean Code": o novo é inalcançável
+  </code></pre>
+  <ul style="font-size:.62em">
+    <li>Um <code>DELETE /api/books/3</code> removeria o livro errado — o cliente pede um e a API apaga outro;</li>
+    <li>Sem identidade única não há GET, PUT nem DELETE confiáveis;</li>
+    <li>A conclusão: o próximo id não pode depender do <em>tamanho</em> da lista.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Correção: o próximo id vem do último</h2>
+  <pre><code class="language-python" data-trim>
+def next_book_id():
+    if not books:
+        return 1
+    return books[-1].id + 1
+
+
+@app.post("/api/books", status_code=201)
+def create_book(book: dict):
+    new_book = Book(id=next_book_id(), name=book["name"])
+    books.append(new_book)
+    return new_book
+  </code></pre>
+  <ul style="font-size:.6em">
+    <li><code>books[-1]</code> é o último elemento — como cada livro novo entra no fim, é sempre o de maior id;</li>
+    <li>O caso da lista vazia vem primeiro: sem ele, <code>books[-1]</code> levantaria <code>IndexError</code>. A numeração recomeça em <strong>1</strong>.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>O limite desta regra</h2>
+  <pre><code class="language-text" data-trim>
+DELETE /api/books/3      → 204   (era o último da lista)
+POST   {"name": "Duna"}  → id = books[-1].id + 1 = 3
+                                 o id do livro que acabou de sair
+  </code></pre>
+  <ul style="font-size:.62em">
+    <li>Não há colisão — o livro antigo não existe mais —, mas há <strong>reaproveitamento</strong>;</li>
+    <li>Um cliente que tivesse guardado <code>/api/books/3</code> passaria a receber outro livro, sem erro algum;</li>
+    <li>É a diferença entre um id que <em>só cresce</em> e um id calculado a partir do estado atual.</li>
+  </ul>
+  <div class="nota">Um id calculado a partir do estado atual reaproveita números. Um contador que <strong>só cresce</strong> — como o <code>AUTO_INCREMENT</code> de um banco de dados — não reaproveita nenhum.</div>
+</section>
+
+<section>
+  <h2 style="font-size:1.1em"><span class="recap">Recapitulando — o recurso Book</span></h2>
+  <ul style="font-size:.75em">
+    <li>Book é uma <strong>classe</strong>; <code>books</code> é uma lista de objetos;</li>
+    <li>O POST constrói o objeto na fronteira: entra dicionário, sai Book;</li>
+    <li>DELETE responde <strong>204</strong> sem corpo, e 404 para id inexistente;</li>
+    <li>O próximo id deriva do último livro da lista — e volta a 1 quando ela esvazia;</li>
+    <li>Ainda em aberto: a validação da entrada e a declaração da saída.</li>
+  </ul>
+</section>
+
+<!-- ============ T-3 O conceito de API ============ -->
+
+<section>
+  <h2>O conceito de API</h2>
+  <ul style="font-size:.68em">
+    <li><strong>Origem do termo:</strong> a primeira ocorrência registrada de <em>application program interface</em> está em "Data structures and techniques for remote computer graphics", de <strong>Ira W. Cotton</strong> e <strong>Frank S. Greatorex Jr.</strong>, AFIPS Fall Joint Computer Conference, <strong>1968</strong>;</li>
+    <li>O problema deles é o mesmo daqui: um programa precisava usar recursos de outra máquina, e era necessário descrever <em>o que</em> podia ser pedido sem descrever <em>como</em> era feito.</li>
+  </ul>
+  <p class="cite">COTTON, I. W.; GREATOREX JR., F. S. Data structures and techniques for remote computer graphics. AFIPS FJCC, 1968</p>
+</section>
+
+<section>
+  <h2>O fundamento: ocultação de informação</h2>
+  <p class="definicao">Cada módulo esconde uma decisão de projeto e expõe apenas a interface pela qual os demais o utilizam.</p>
+  <ul style="font-size:.65em;margin-top:.8em">
+    <li>Princípio estabelecido por <strong>David L. Parnas</strong> em "On the Criteria To Be Used in Decomposing Systems into Modules" (<em>Communications of the ACM</em>, v. 15, n. 12, 1972);</li>
+    <li>É o <strong>encapsulamento</strong> da orientação a objetos, aplicado à fronteira entre sistemas;</li>
+    <li>A API é essa interface, publicada e assumida como <strong>compromisso</strong>.</li>
+  </ul>
+  <p class="cite">PARNAS, D. L. On the Criteria To Be Used in Decomposing Systems into Modules. CACM, 1972</p>
+</section>
+
+<section>
+  <h2>Nem toda API é uma API web</h2>
+  <p class="definicao">Uma API é o contrato que um software oferece para ser usado por outro software: quais operações existem, o que cada uma exige e o que devolve.</p>
+  <ul style="font-size:.62em;margin-top:.8em">
+    <li>Já utilizadas nesta disciplina: <code>books.append(...)</code> é a API da <code>list</code>; <code>open(...)</code>, a API de arquivos; <code>@app.get(...)</code>, a API do FastAPI;</li>
+    <li>A <strong>API web</strong> é o caso particular em que o contrato é exposto pela rede, sobre HTTP — o consumidor pode estar em outra máquina, em outra linguagem;</li>
+    <li>Um frontend é exatamente esse consumidor: tudo o que ele sabe do backend é a API.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>O contrato legível por máquina</h2>
+  <ul style="font-size:.65em">
+    <li>O FastAPI publica em <code>/openapi.json</code> uma descrição formal do contrato no padrão <strong>OpenAPI</strong>;</li>
+    <li>Criado como <em>Swagger</em> por Tony Tam em 2011; doado em 2015 à Linux Foundation, onde foi renomeado para OpenAPI Specification;</li>
+    <li>A página <code>/docs</code> do FastAPI é apenas um <strong>leitor</strong> desse arquivo;</li>
+    <li>Alterar um campo da resposta é alterar o contrato — e quebra todos os clientes ao mesmo tempo.</li>
+  </ul>
+  <p class="cite">OpenAPI Initiative — spec.openapis.org · Documentação oficial do FastAPI — fastapi.tiangolo.com</p>
+</section>
+
+<section>
+  <h2 style="font-size:1.1em"><span class="recap">Recapitulando — API</span></h2>
+  <ul style="font-size:.78em">
+    <li>Termo registrado em 1968; fundamento em Parnas (1972): ocultação de informação;</li>
+    <li>API é contrato: operações, entradas e saídas — sem revelar a implementação;</li>
+    <li>API web é o caso em que esse contrato trafega por HTTP;</li>
+    <li>OpenAPI descreve o contrato em formato que máquinas leem.</li>
   </ul>
 </section>
 
@@ -86,10 +337,10 @@
   <h2>Os componentes, um a um</h2>
   <ul style="font-size:.65em">
     <li><strong>Esquema</strong> — o protocolo da conversa: <code>http</code>, <code>https</code> (HTTP sobre conexão cifrada), <code>mailto</code>...;</li>
-    <li><strong>Host</strong> — nome ou IP da máquina; o nome é o que o DNS da aula 02 traduz;</li>
+    <li><strong>Host</strong> — nome ou IP da máquina; o nome é o que o DNS traduz;</li>
     <li><strong>Porta</strong> — o programa dentro da máquina. Cada esquema tem porta padrão (80 para http, 443 para https) — a nossa <code>:8000</code> aparece porque não é a padrão;</li>
     <li><strong>Caminho</strong> — hierárquico, como diretórios: identifica <em>o recurso</em>;</li>
-    <li><strong>Query</strong> — os pares <code>chave=valor</code> da aula 02: ajustam o pedido;</li>
+    <li><strong>Query</strong> — os pares <code>chave=valor</code> após o <code>?</code>: ajustam o pedido;</li>
     <li><strong>Fragmento</strong> — a âncora após o <code>#</code>: uma parte <em>dentro</em> do documento.</li>
   </ul>
   <p class="cite">RFC 3986 — Uniform Resource Identifier (URI): Generic Syntax, IETF, 2005</p>
@@ -138,19 +389,19 @@ https://developer.mozilla.org/pt-BR/docs/Web/HTTP#recursos
   <p class="definicao">REST é um estilo arquitetural para sistemas de hipermídia distribuídos — um conjunto de restrições que, respeitadas, conferem ao sistema as propriedades da web.</p>
   <ul style="font-size:.65em;margin-top:.8em">
     <li>Não é biblioteca nem framework: é um critério de projeto;</li>
-    <li><strong>As seis restrições:</strong> cliente–servidor (aula 01) · <strong>stateless</strong> · cache · <strong>interface uniforme</strong> · sistema em camadas · código sob demanda (opcional);</li>
-    <li>A disciplina aprofunda as duas em destaque; a tese vai além (hipermídia, HATEOAS) — o que o mercado chama de "API REST" é o núcleo: recursos, verbos e status codes.</li>
+    <li><strong>As seis restrições:</strong> cliente–servidor · <strong>stateless</strong> · cache · <strong>interface uniforme</strong> · sistema em camadas · código sob demanda (opcional);</li>
+    <li>As duas em destaque são as que moldam o desenho de uma API; a tese vai além (hipermídia, HATEOAS) — o que o mercado chama de "API REST" é o núcleo: recursos, verbos e status codes.</li>
   </ul>
   <p class="cite">FIELDING, R. Architectural Styles and the Design of Network-based Software Architectures, 2000</p>
 </section>
 
 <section>
   <h2>Recurso e representação</h2>
-  <ul style="font-size:.72em">
+  <ul style="font-size:.7em">
     <li><strong>Recurso</strong> — na formulação de Fielding, <em>"qualquer informação que possa ser nomeada"</em>: <em>um</em> livro, <em>a coleção</em> de livros, um usuário;</li>
     <li>Cada recurso é identificado por uma <strong>URI</strong> — por isso a estrutura da URI veio primeiro;</li>
-    <li><strong>Representação</strong> — o que viaja na resposta não é o recurso, mas uma representação do seu estado em um formato: nesta API, <strong>JSON</strong>;</li>
-    <li>O mesmo recurso poderia ser representado em HTML, XML ou PDF.</li>
+    <li><strong>Representação</strong> — o que viaja na resposta não é o recurso, mas uma representação do seu estado em um formato;</li>
+    <li>No nosso servidor o recurso é um objeto <code>Book</code> na memória; o que sai pela rede é <strong>JSON</strong>. O mesmo recurso poderia ser representado em HTML, XML ou PDF.</li>
   </ul>
   <p class="cite">FIELDING, R., 2000 · RICHARDSON, L.; RUBY, S. RESTful Web Services, 2007</p>
 </section>
@@ -164,15 +415,16 @@ https://developer.mozilla.org/pt-BR/docs/Web/HTTP#recursos
 
 <section>
   <h2>Verbos HTTP e as operações CRUD</h2>
-  <table class="status-tab">
+  <table class="status-tab" style="font-size:.62em">
     <tr><th>CRUD</th><th>Verbo</th><th>Na coleção</th><th>No item</th><th>Status</th></tr>
     <tr><td><strong>C</strong>reate</td><td>POST</td><td>cria um livro</td><td>—</td><td>201</td></tr>
     <tr><td><strong>R</strong>ead</td><td>GET</td><td>lista</td><td>um livro</td><td>200</td></tr>
     <tr><td><strong>U</strong>pdate</td><td>PUT</td><td>—</td><td>substitui os dados</td><td>200</td></tr>
     <tr><td><strong>D</strong>elete</td><td>DELETE</td><td>—</td><td>remove</td><td>204</td></tr>
   </table>
-  <ul style="font-size:.62em;margin-top:.8em">
+  <ul style="font-size:.6em;margin-top:.8em">
     <li>Um método é <strong>seguro</strong> quando não modifica o recurso (GET) e <strong>idempotente</strong> quando repeti-lo produz o mesmo efeito de uma execução (GET, PUT, DELETE — POST não);</li>
+    <li>O segundo DELETE devolveu 404, mas o <em>estado do servidor</em> ficou idêntico: é isso que idempotência significa;</li>
     <li><strong>PATCH</strong> (atualização parcial) fica registrado como menção — o PUT com schema pequeno atende o projeto.</li>
   </ul>
   <p class="cite">RFC 9110 — HTTP Semantics, IETF, 2022 · RICHARDSON, L.; RUBY, S. RESTful Web Services, 2007</p>
@@ -196,7 +448,7 @@ https://developer.mozilla.org/pt-BR/docs/Web/HTTP#recursos
     <li>Cada requisição contém <strong>toda a informação necessária</strong> para ser atendida;</li>
     <li>O servidor não guarda estado de sessão entre requisições;</li>
     <li>Ganhos apontados por Fielding: <strong>visibilidade</strong>, <strong>confiabilidade</strong> e <strong>escalabilidade</strong>;</li>
-    <li>Consequência para o curso: o token de autenticação (JWT, aula 09) precisará viajar <em>em cada requisição</em>.</li>
+    <li>Consequência direta: um token de autenticação precisa viajar <em>em cada requisição</em> — não existe "sessão aberta" no servidor.</li>
   </ul>
   <p class="cite">FIELDING, R. Architectural Styles and the Design of Network-based Software Architectures, 2000</p>
 </section>
@@ -217,17 +469,17 @@ https://developer.mozilla.org/pt-BR/docs/Web/HTTP#recursos
 <section>
   <h2>O mapa de rotas do Reading Tracker</h2>
   <table class="status-tab" style="font-size:.6em">
-    <tr><th>Verbo + URI</th><th>O que faz</th><th>Quando</th></tr>
-    <tr><td><code>GET /api/books</code></td><td>lista os Books</td><td>aula 02</td></tr>
-    <tr><td><code>GET /api/books/{book_id}</code></td><td>um Book pelo id</td><td>aula 02</td></tr>
-    <tr><td><code>POST /api/books</code></td><td>cria um Book</td><td>aula 02</td></tr>
-    <tr><td><code>PUT /api/books/{book_id}</code></td><td>atualiza um Book</td><td><strong>hoje</strong></td></tr>
-    <tr><td><code>DELETE /api/books/{book_id}</code></td><td>remove um Book</td><td><strong>hoje</strong></td></tr>
-    <tr><td><code>POST /signup</code></td><td>cadastra um User</td><td>aula 04</td></tr>
-    <tr><td><code>GET /users/{user_id}/books</code></td><td>os Books de um User</td><td>aula 05</td></tr>
-    <tr><td><code>POST /books/{book_id}/progress</code></td><td>registra um Reading Update</td><td>aula 06</td></tr>
+    <tr><th>Verbo + URI</th><th>O que faz</th><th>Estado</th></tr>
+    <tr><td><code>GET /api/books</code></td><td>lista os Books</td><td>implementado</td></tr>
+    <tr><td><code>GET /api/books/{book_id}</code></td><td>um Book pelo id</td><td>implementado</td></tr>
+    <tr><td><code>POST /api/books</code></td><td>cria um Book</td><td>implementado</td></tr>
+    <tr><td><code>DELETE /api/books/{book_id}</code></td><td>remove um Book</td><td>implementado</td></tr>
+    <tr><td><code>PUT /api/books/{book_id}</code></td><td>atualiza um Book</td><td>projetado</td></tr>
+    <tr><td><code>POST /signup</code></td><td>cadastra um User</td><td>projetado</td></tr>
+    <tr><td><code>GET /users/{user_id}/books</code></td><td>os Books de um User</td><td>projetado</td></tr>
+    <tr><td><code>POST /books/{book_id}/progress</code></td><td>registra um Reading Update</td><td>projetado</td></tr>
   </table>
-  <p style="font-size:.6em;margin-top:.7em">Elaborado em sala a partir dos substantivos do glossário do projeto: <strong>User</strong>, <strong>Book</strong>, <strong>Reading Update</strong>.</p>
+  <p style="font-size:.6em;margin-top:.7em">Elaborado a partir dos substantivos do domínio: <strong>User</strong>, <strong>Book</strong>, <strong>Reading Update</strong>. Projetar a URI antes de implementá-la é o que mantém a interface uniforme.</p>
 </section>
 
 <section>
@@ -235,11 +487,11 @@ https://developer.mozilla.org/pt-BR/docs/Web/HTTP#recursos
   <ul style="font-size:.7em">
     <li><code>/signup</code> foge da regra do substantivo — é uma <em>ação</em>. Exceção pragmática consagrada: cadastro e login são operações, não recursos;</li>
     <li><code>/users/{user_id}/books</code> expressa <strong>hierarquia</strong>: a URI documenta a relação entre os recursos;</li>
-    <li>Por ora, qualquer cliente pode informar qualquer <code>user_id</code> — decisão deliberada (ADR-0001): a falha será o ponto de partida da aula de autenticação.</li>
+    <li><code>GET /users/{user_id}/books</code> aceita qualquer <code>user_id</code>: a URI identifica o recurso, mas não diz <em>quem</em> pode acessá-lo. Identificação e autorização são problemas distintos.</li>
   </ul>
 </section>
 
-<!-- ============ Live-coding ============ -->
+<!-- ============ Bloco 3 — validação na borda ============ -->
 
 <section>
   <h2>O problema: corpo sem validação</h2>
@@ -266,7 +518,7 @@ class BookCreate(BaseModel):
   </code></pre>
   <ul style="font-size:.62em">
     <li>Biblioteca de validação de dados criada por Samuel Colvin (2017); as <strong>anotações de tipo</strong> do Python são a fonte das regras;</li>
-    <li>É a base de toda a validação do FastAPI — por isso já constava na Tabela de Dependências;</li>
+    <li>É a base de toda a validação do FastAPI, e vem instalada como dependência dele;</li>
     <li>Um <strong>schema</strong> declara campos e tipos: <code>BookCreate</code> exige um <code>name</code> do tipo string.</li>
   </ul>
   <p class="cite">Documentação oficial do Pydantic — docs.pydantic.dev · Documentação oficial do FastAPI — fastapi.tiangolo.com</p>
@@ -277,13 +529,13 @@ class BookCreate(BaseModel):
   <pre><code class="language-python" data-trim>
 @app.post("/api/books", status_code=201)
 def create_book(book: BookCreate):
-    new_book = {"id": len(books) + 1, "name": book.name}
+    new_book = Book(id=next_book_id(), name=book.name)
     books.append(new_book)
     return new_book
   </code></pre>
   <ul style="font-size:.65em">
     <li><code>book: BookCreate</code> — o FastAPI valida o corpo <em>antes</em> de chamar a função;</li>
-    <li>O acesso passa a ser <code>book.name</code>: atributo de objeto, não chave de dicionário;</li>
+    <li>O acesso passa a ser <code>book.name</code>: atributo, não chave de dicionário;</li>
     <li>É o mesmo mecanismo do <code>book_id: int</code> — agora aplicado ao corpo da requisição.</li>
   </ul>
 </section>
@@ -304,98 +556,36 @@ def create_book(book: BookCreate):
   <ul style="font-size:.65em">
     <li>De <strong>500</strong> (falha do servidor) para <strong>422</strong> (pedido inválido) — a família correta;</li>
     <li>A resposta indica <em>onde</em> (<code>body → name</code>) e <em>o quê</em> (<code>Field required</code>);</li>
-    <li><code>{"name": 123}</code> também é barrado: tipo errado é rejeitado na borda.</li>
+    <li><code>{"name": 123}</code> também é barrado: <code>"Input should be a valid string"</code>.</li>
   </ul>
 </section>
 
 <section>
-  <h2>response_model: o formato da resposta declarado</h2>
-  <pre><code class="language-python" data-trim>
-class Book(BaseModel):
-    id: int
-    name: str
-
-
-@app.get("/api/books", response_model=list[Book])
-@app.get("/api/books/{book_id}", response_model=Book)
-@app.post("/api/books", response_model=Book, status_code=201)
-  </code></pre>
-  <ul style="font-size:.6em">
-    <li>Dois schemas: o que <em>sai</em> tem <code>id</code>; o que <em>entra</em> não — o id é atribuído pelo servidor;</li>
-    <li><code>response_model</code> valida a saída e documenta o formato exato no <code>/docs</code> (decisão do ADR-0002);</li>
-    <li>Os corpos das funções não mudam — apenas a linha do decorator, uma por rota.</li>
+  <h2>Duas classes, dois papéis</h2>
+  <img src="img/borda-do-sistema.png" alt="Diagrama da borda do sistema: o cliente envia JSON validado por BookCreate, a lista books guarda objetos Book, e a resposta volta ao cliente sem schema declarado" style="width:100%;max-width:740px">
+  <ul style="font-size:.58em;margin-top:.4em">
+    <li><code>Book</code> — o modelo do domínio: o que o sistema guarda;</li>
+    <li><code>BookCreate</code> — o contrato de entrada. O cliente <strong>não</strong> envia o id: quem o atribui é o servidor;</li>
+    <li>A saída não tem schema declarado — o contrato está cumprido pela metade.</li>
   </ul>
-  <p class="cite">Documentação oficial do FastAPI — fastapi.tiangolo.com</p>
 </section>
 
 <section>
   <h2>Atualização: PUT /api/books/{book_id}</h2>
   <pre><code class="language-python" data-trim>
-@app.put("/api/books/{book_id}", response_model=Book)
+@app.put("/api/books/{book_id}")
 def update_book(book_id: int, book: BookCreate):
     for stored_book in books:
-        if stored_book["id"] == book_id:
-            stored_book["name"] = book.name
+        if stored_book.id == book_id:
+            stored_book.name = book.name
             return stored_book
     raise HTTPException(status_code=404, detail="Book not found")
   </code></pre>
-  <ul style="font-size:.6em">
+  <ul style="font-size:.58em">
     <li>O id viaja no <strong>caminho</strong> (identifica o recurso); os dados novos, no <strong>corpo</strong> (a nova representação);</li>
-    <li>O corpo reutiliza <code>BookCreate</code>: atualizar exige os mesmos campos que criar;</li>
+    <li>O corpo reutiliza <code>BookCreate</code>: atualizar exige os mesmos campos que criar, e o id nunca vem no corpo;</li>
+    <li>O objeto é mutável: troca-se o atributo no lugar, sem recriar nem reinserir na lista;</li>
     <li>O mesmo PUT duas vezes → o mesmo resultado: a <strong>idempotência</strong> da teoria, verificada.</li>
-  </ul>
-</section>
-
-<section>
-  <h2>Remoção: DELETE /api/books/{book_id}</h2>
-  <pre><code class="language-python" data-trim>
-@app.delete("/api/books/{book_id}", status_code=204)
-def delete_book(book_id: int):
-    for book in books:
-        if book["id"] == book_id:
-            books.remove(book)
-            return
-    raise HTTPException(status_code=404, detail="Book not found")
-  </code></pre>
-  <ul style="font-size:.6em">
-    <li><strong>204 No Content</strong>: a operação teve êxito e não há conteúdo a devolver — <code>return</code> vazio, sem <code>response_model</code>;</li>
-    <li>DELETE repetido no mesmo id → <strong>404</strong>: o recurso já não existe;</li>
-    <li>O CRUD está completo — as quatro operações da tabela têm rota.</li>
-  </ul>
-</section>
-
-<section>
-  <h2>Remoções quebram a geração de ids</h2>
-  <pre><code class="language-text" data-trim>
-DELETE /api/books/1     → 204  (restam ids 2 e 3; len = 2)
-POST   {"name": "Duna"} → id = len(books) + 1 = 3 ... já existe
-GET    /api/books       → dois livros com id 3
-GET    /api/books/3     → devolve o primeiro que encontrar
-  </code></pre>
-  <ul style="font-size:.65em">
-    <li>O livro novo recebe o id de um livro <strong>existente</strong> — e um dos registros fica inacessível;</li>
-    <li>Era a pergunta deixada na aula 02: o próximo id não pode depender do <em>tamanho</em> da lista.</li>
-  </ul>
-</section>
-
-<section>
-  <h2>Correção: um contador monotônico</h2>
-  <pre><code class="language-python" data-trim>
-next_book_id = 4
-
-
-@app.post("/api/books", response_model=Book, status_code=201)
-def create_book(book: BookCreate):
-    global next_book_id
-    new_book = {"id": next_book_id, "name": book.name}
-    next_book_id += 1
-    books.append(new_book)
-    return new_book
-  </code></pre>
-  <ul style="font-size:.6em">
-    <li><code>global</code>: a função precisa <em>reatribuir</em> a variável do módulo (sem ele, nasceria uma variável local);</li>
-    <li>O contador só cresce: id de livro removido nunca é reaproveitado;</li>
-    <li>Antecipa o <strong>auto-increment</strong> do banco de dados, tema da aula 04.</li>
   </ul>
 </section>
 
@@ -418,46 +608,38 @@ def create_book(book: BookCreate):
 
 <section>
   <h2>Exercício em sala</h2>
-  <ol style="font-size:.75em">
-    <li>Adicione o campo <code>author</code> (string, opcional, padrão <code>""</code>) aos <strong>dois</strong> schemas;</li>
+  <ol style="font-size:.72em">
+    <li>Adicione o campo <code>author</code> (string, opcional, padrão <code>""</code>) às <strong>duas</strong> classes, respeitando o papel de cada uma;</li>
     <li>Ajuste <code>create_book</code> e <code>update_book</code> para gravar o novo campo;</li>
-    <li>Teste no Swagger: POST com e sem author — e o GET da lista exibindo os livros iniciais com <code>author</code> vazio (preenchido pelo <code>response_model</code>, a partir do valor padrão do schema).</li>
+    <li>Teste no Swagger: POST com e sem author — e o GET da lista exibindo os livros iniciais com <code>author</code> vazio.</li>
   </ol>
-  <div class="nota">Exercício descartável: a branch da disciplina segue <strong>sem</strong> o campo <code>author</code> — a aula 04 parte do código sem ele.</div>
+  <p style="font-size:.62em;margin-top:.6em"><em>Ao final: quantos lugares foi preciso editar para acrescentar <strong>um</strong> campo?</em></p>
+  <div class="nota">O projeto segue <strong>sem</strong> o campo <code>author</code>: guarde a sua solução fora do repositório.</div>
 </section>
 
 <section>
   <h2>Síntese da aula</h2>
-  <ul style="font-size:.7em">
+  <ul style="font-size:.65em">
+    <li>API é o contrato que um software publica para ser usado por outro, ocultando a implementação (Parnas, 1972);</li>
     <li>URI (RFC 3986): esquema, host, porta, caminho, query, fragmento — e o fragmento não é enviado;</li>
     <li>REST (Fielding, 2000): estilo arquitetural definido por restrições; recursos, representações e interface uniforme;</li>
     <li>Verbos HTTP mapeiam o CRUD; segurança e idempotência são propriedades formais (RFC 9110);</li>
-    <li>O mapa de rotas do projeto está desenhado — até a aula 06;</li>
-    <li>Pydantic valida na borda: schema na entrada, <code>response_model</code> na saída — o 500 tornou-se 422;</li>
-    <li>CRUD de Books completo, com geração de ids monotônica.</li>
-  </ul>
-</section>
-
-<section>
-  <h2>Próxima aula: persistência de dados</h2>
-  <p style="font-size:.8em">O CRUD está completo, mas os dados são voláteis: a cada reinício do servidor, tudo se perde.</p>
-  <ul style="font-size:.75em">
-    <li>Banco de dados <strong>MySQL</strong>;</li>
-    <li>O ORM <strong>SQLModel</strong> como tradutor entre Python e SQL;</li>
-    <li>O primeiro recurso persistente do mapa: o <strong>User</strong>, com a rota de signup;</li>
-    <li>O auto-increment do banco substitui o contador artesanal.</li>
+    <li>O recurso Book virou objeto, o CRUD se completou e o id não colide mais;</li>
+    <li>Pydantic valida a entrada na borda e o 500 tornou-se 422; a saída segue inferida pelo framework, sem contrato declarado.</li>
   </ul>
 </section>
 
 <section>
   <h2>Referências</h2>
-  <ul style="font-size:.55em">
+  <ul style="font-size:.52em">
+    <li>COTTON, I. W.; GREATOREX JR., F. S. <em>Data structures and techniques for remote computer graphics</em>. AFIPS Fall Joint Computer Conference, 1968. (primeira ocorrência registrada do termo API)</li>
+    <li>PARNAS, D. L. <em>On the Criteria To Be Used in Decomposing Systems into Modules</em>. Communications of the ACM, v. 15, n. 12, 1972.</li>
     <li>FIELDING, R. <em>Architectural Styles and the Design of Network-based Software Architectures</em>. Tese de doutorado, UC Irvine, 2000. (cap. 5 — a definição original de REST)</li>
     <li>RFC 3986 — <em>Uniform Resource Identifier (URI): Generic Syntax</em>. IETF, 2005.</li>
     <li>RFC 9110 — <em>HTTP Semantics</em>. IETF, 2022. (semântica dos métodos; segurança e idempotência)</li>
     <li>RICHARDSON, L.; RUBY, S. <em>RESTful Web Services</em>. O'Reilly, 2007.</li>
-    <li>Documentação oficial do FastAPI — fastapi.tiangolo.com.</li>
-    <li>Documentação oficial do Pydantic — docs.pydantic.dev.</li>
+    <li>OpenAPI Specification — OpenAPI Initiative, spec.openapis.org.</li>
+    <li>Documentação oficial do FastAPI — fastapi.tiangolo.com · Documentação oficial do Pydantic — docs.pydantic.dev.</li>
     <li>MDN Web Docs — developer.mozilla.org (HTTP e ferramentas do navegador).</li>
   </ul>
 </section>

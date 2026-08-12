@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 290" style="width:100%;max-width:740px">
+  <defs>
+    <marker id="seta" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 z" fill="#444"/>
+    </marker>
+  </defs>
+
+  <line x1="340" y1="80" x2="340" y2="186" stroke="#aaa" stroke-width="2" stroke-dasharray="7,6"/>
+  <rect x="258" y="126" width="164" height="24" fill="#fff"/>
+  <text x="340" y="144" text-anchor="middle" font-size="13" fill="#999">a borda do sistema</text>
+
+  <rect x="20" y="100" width="150" height="80" rx="10" fill="#f4f2ee" stroke="#888" stroke-width="2"/>
+  <text x="95" y="135" text-anchor="middle" font-size="17" font-weight="bold" fill="#555">Cliente</text>
+  <text x="95" y="157" text-anchor="middle" font-size="13" fill="#888">JSON pela rede</text>
+
+  <rect x="500" y="100" width="240" height="80" rx="10" fill="#fdf6e3" stroke="#b8860b" stroke-width="2"/>
+  <text x="620" y="133" text-anchor="middle" font-size="15" font-family="monospace" fill="#8a6508">books = [Book, ...]</text>
+  <text x="620" y="157" text-anchor="middle" font-size="13" fill="#999">o modelo do domínio</text>
+
+  <polyline points="175,120 230,120 230,55 285,55" fill="none" stroke="#444" stroke-width="2" marker-end="url(#seta)"/>
+  <rect x="288" y="33" width="104" height="44" rx="8" fill="#eef4fa" stroke="#2e6da4" stroke-width="2"/>
+  <text x="340" y="61" text-anchor="middle" font-size="14" font-family="monospace" fill="#2e6da4">BookCreate</text>
+  <text x="340" y="25" text-anchor="middle" font-size="12" fill="#2e6da4">valida o que entra</text>
+  <polyline points="395,55 615,55 615,95" fill="none" stroke="#444" stroke-width="2" marker-end="url(#seta)"/>
+
+  <polyline points="615,185 615,225 395,225" fill="none" stroke="#444" stroke-width="2" marker-end="url(#seta)"/>
+  <rect x="288" y="203" width="104" height="44" rx="8" fill="#fafafa" stroke="#bbb" stroke-width="2" stroke-dasharray="5,4"/>
+  <text x="340" y="230" text-anchor="middle" font-size="13" fill="#999">não declarada</text>
+  <text x="340" y="264" text-anchor="middle" font-size="12" fill="#999">o FastAPI monta o JSON lendo os atributos do objeto</text>
+  <polyline points="285,225 230,225 230,160 175,160" fill="none" stroke="#444" stroke-width="2" marker-end="url(#seta)"/>
+</svg>
