@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Aula 05 — Relações 1:N e o CRUD de Books</title>
+<title>Aula 05 — Users e autenticação com JWT</title>
 <link rel="stylesheet" href="../assets/reveal/dist/reset.css">
 <link rel="stylesheet" href="../assets/reveal/dist/reveal.css">
 <link rel="stylesheet" href="../assets/reveal/dist/theme/white.css">
@@ -37,412 +37,467 @@
 <!-- ============ Abertura ============ -->
 
 <section>
-  <h1 style="font-size:1.5em">Relações 1:N<br>e o CRUD de Books</h1>
+  <h1 style="font-size:1.5em">Users e autenticação<br>com JWT</h1>
   <p>Programação Avançada — Aula 05</p>
   <p style="font-size:.55em;color:#888">Universidade Unirios</p>
 </section>
 
 <section>
-  <h2>Revisão — o estado do projeto</h2>
+  <h2>Qualquer um apaga qualquer livro</h2>
+  <p style="font-size:.7em">O CRUD de Books persiste no MySQL — restart não apaga nada, o banco gera os ids. Abra uma janela anônima e chame a API: listar, criar, alterar e apagar <strong>funcionam para qualquer um</strong>.</p>
   <ul style="font-size:.7em">
-    <li>O <strong>User mora no MySQL</strong>: model, tabela criada pelo <code>create_all</code>, <code>POST /signup</code> com 201 e 409;</li>
-    <li>No quadro, a dívida da aula 04: <strong>senha em texto puro</strong> (ADR-0001 → aula 09);</li>
-    <li>Os <strong>Books, não</strong>: seguem na lista em memória da aula 02, morrendo a cada restart do uvicorn.</li>
+    <li><strong>Livro não tem dono</strong> — a tabela <code>books</code> não sabe de quem é cada linha (posse);</li>
+    <li><strong>A API não sabe quem chama</strong> — não existe sequer o conceito de usuário (identidade).</li>
   </ul>
-  <p style="font-size:.7em;margin-top:.8em">Hoje a promessa se cumpre: o Book se muda para o banco — e ganha <strong>dono</strong>.</p>
+  <p style="font-size:.65em">Posse se resolve <strong>no banco</strong>, com uma relação. Identidade se resolve <strong>na API</strong>, com autenticação. A aula constrói os dois, nessa ordem.</p>
 </section>
 
 <section>
   <h2>Objetivos da aula</h2>
   <ul style="font-size:.72em">
-    <li>Explicar o que é uma <strong>relação 1:N</strong> e em que lado dela mora a chave estrangeira;</li>
-    <li>Definir <strong>integridade referencial</strong> e vê-la defendida pelo banco;</li>
-    <li>Declarar a relação User–Book no SQLModel com <code>foreign_key</code> e <code>Relationship</code>;</li>
-    <li>Reconstruir o <strong>CRUD de Books</strong> sobre o MySQL, nas rotas do mapa REST da aula 03;</li>
-    <li>Apontar a falha deliberada do <code>user_id</code> na URL (ADR-0001).</li>
+    <li><span class="tema-badge">T-7</span> Declarar a relação <strong>1:N</strong> com chave estrangeira obrigatória de <code>books</code> para <code>users</code>;</li>
+    <li>Implementar <code>POST /signup</code> guardando apenas o <strong>hash</strong> da senha (bcrypt);</li>
+    <li><span class="tema-badge">T-8</span> Comparar <strong>cookies e sessions</strong> com <strong>tokens</strong> — e justificar o JWT nesta aplicação;</li>
+    <li><span class="tema-badge">T-8</span> Descrever a <strong>anatomia de um JWT</strong> e os claims que ele carrega;</li>
+    <li>Implementar <code>POST /login</code> e proteger o CRUD: cada usuário só enxerga e altera <strong>os próprios livros</strong>.</li>
   </ul>
 </section>
 
+<!-- ============ T-7 Relação 1:N ============ -->
+
 <section>
-  <h2>A posse é parte do domínio</h2>
-  <p class="definicao">"Book: livro cadastrado por um User (...) pertence exclusivamente ao User que o cadastrou."</p>
+  <h2>Entidades e relacionamentos</h2>
+  <p class="definicao">O modelo entidade-relacionamento descreve os dados como entidades ligadas por relacionamentos com cardinalidade: 1:1, 1:N, N:M.</p>
   <ul style="font-size:.65em;margin-top:.8em">
-    <li>O glossário do projeto define a posse desde o início — e o código, até hoje, não a expressa;</li>
-    <li>Expressar posse entre tabelas é o que o modelo relacional chama de <strong>relação 1:N</strong>;</li>
-    <li>Duas mudanças acompanham a mudança de casa: <code>name</code> vira <strong><code>title</code></strong>, e o cadastro passa a exigir <strong><code>pages</code></strong> — sem o total de páginas, a porcentagem de leitura da aula 06 não existe.</li>
-  </ul>
-  <p class="cite">CONTEXT.md — glossário do projeto Reading Tracker</p>
-</section>
-
-<!-- ============ Teoria: 1:N, FK, integridade ============ -->
-
-<section>
-  <h2>Ligar dados por valor, não por ponteiro</h2>
-  <ul style="font-size:.65em">
-    <li>Antes do modelo relacional, os bancos <strong>navegacionais</strong> (hierárquicos, como o IMS da IBM; de rede, como os do padrão CODASYL) ligavam registros por <strong>ponteiros físicos</strong> — o programa navegava a estrutura;</li>
-    <li>A proposta de <strong>Edgar F. Codd</strong> (1970): relações se ligam por <strong>valores compartilhados</strong> — uma tabela referencia a outra guardando o valor da chave dela;</li>
-    <li>É essa ideia que hoje ganha nome e sintaxe no nosso projeto.</li>
-  </ul>
-  <p class="cite">CODD, E. F. — A Relational Model of Data for Large Shared Data Banks, CACM, 1970</p>
-</section>
-
-<section>
-  <h2>Modelar o mundo antes de criar tabelas</h2>
-  <ul style="font-size:.62em">
-    <li><strong>Origem:</strong> <strong>Peter Chen</strong>, <em>The Entity-Relationship Model — Toward a Unified View of Data</em> (ACM Transactions on Database Systems, vol. 1, n. 1, 1976);</li>
-    <li><strong>Propósito:</strong> descrever o domínio antes do banco — <strong>entidades</strong> (as "coisas": User, Book), <strong>relacionamentos</strong> (as associações: "cadastrou", "pertence a") e <strong>cardinalidades</strong>;</li>
-    <li>Cardinalidades: <strong>1:1</strong>, <strong>1:N</strong>, <strong>N:M</strong> (esta exige tabela associativa — fica na menção);</li>
-    <li>O nosso caso: <em>um</em> User tem <em>muitos</em> Books; cada Book pertence a <em>exatamente um</em> User — <strong>1:N</strong>;</li>
-    <li>Aula 06: a segunda 1:N do projeto — um Book tem muitos Reading Updates.</li>
+    <li><strong>Origem:</strong> formalizado por <strong>Peter Chen</strong> em <em>The Entity-Relationship Model — Toward a Unified View of Data</em> (ACM TODS, 1976);</li>
+    <li><strong>Nosso caso é 1:N:</strong> <em>um</em> User possui <em>vários</em> Books; cada Book pertence a <em>exatamente um</em> User — a regra do domínio do projeto.</li>
   </ul>
   <p class="cite">CHEN, P. — The Entity-Relationship Model, ACM TODS, 1976</p>
 </section>
 
 <section>
-  <h2>A relação 1:N no banco</h2>
-  <img src="img/relacao-1-n.png" alt="Tabelas book e user lado a lado: a coluna book.user_id guarda valores de user.id; setas ligam cada book ao seu dono" style="width:100%;max-width:740px">
-  <p class="cite">CHEN, P. — The Entity-Relationship Model, ACM TODS, 1976 · DATE, C. J. — An Introduction to Database Systems, 8ª ed., 2003</p>
+  <h2>A relação é uma coluna</h2>
+  <img src="img/relacao-1-n.png" alt="Diagrama da relação 1:N: a coluna user_id em books aponta para a chave primária de users" style="width:100%;max-width:760px">
+  <p class="cite">CHEN, P. — 1976 · DATE, C. J. — An Introduction to Database Systems, 2003</p>
 </section>
 
 <section>
-  <h2>A chave estrangeira mora no lado N</h2>
-  <p class="definicao">Chave estrangeira: coluna (ou conjunto de colunas) cujos valores devem ser, obrigatoriamente, valores da chave primária da tabela referenciada.</p>
-  <ul style="font-size:.65em;margin-top:.8em">
-    <li>No nosso caso: <code>book.user_id</code> só aceita valores que existam em <code>user.id</code>;</li>
-    <li>Cada Book aponta para o seu único dono — uma coluna escalar basta;</li>
-    <li>O contrário não funciona: o User teria que guardar uma <em>lista</em> de ids numa coluna só — e o lado N é ilimitado.</li>
-  </ul>
-  <p class="cite">DATE, C. J. — An Introduction to Database Systems, 8ª ed., 2003</p>
-</section>
-
-<section>
-  <h2>Integridade referencial: a referência nunca quebra</h2>
-  <ul style="font-size:.65em">
-    <li>Garantia defendida <strong>pelo banco</strong>, não pelo programa — como o <code>UNIQUE</code> do e-mail na aula 04;</li>
-    <li><strong>Recusa o filho órfão:</strong> INSERT de book com <code>user_id</code> inexistente falha;</li>
-    <li><strong>Protege o pai com filhos:</strong> DELETE de user que ainda tem books falha;</li>
-    <li>Comportamento padrão do MySQL: <code>RESTRICT</code> (recusar);</li>
-    <li>Alternativas declaráveis: <code>ON DELETE CASCADE</code> (o pai leva os filhos), <code>ON DELETE SET NULL</code> — menção, não usaremos.</li>
-  </ul>
-  <p class="cite">DATE, C. J. — An Introduction to Database Systems, 8ª ed., 2003</p>
-</section>
-
-<section>
-  <h2>O SQL de hoje</h2>
-  <pre><code class="language-sql" data-trim>
-CREATE TABLE book (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(200) NOT NULL,
-    pages INT NOT NULL,
-    user_id INT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES user(id)
-);
-  </code></pre>
-  <p style="font-size:.6em">Como na aula 04: ninguém digita este <code>CREATE TABLE</code> — o ORM o escreve por nós.</p>
-</section>
-
-<section>
-  <h2 style="font-size:1.1em"><span class="recap">Recapitulando — relações 1:N</span></h2>
-  <ul style="font-size:.8em">
-    <li>Relações se ligam por <strong>valores</strong>, não por ponteiros (Codd, 1970);</li>
-    <li>Cardinalidades — 1:1, 1:N, N:M — descrevem o domínio (Chen, 1976);</li>
-    <li>A <strong>chave estrangeira</strong> materializa a relação e mora sempre no <strong>lado N</strong>;</li>
-    <li><strong>Integridade referencial:</strong> órfão recusado, pai protegido — o banco defende sozinho.</li>
-  </ul>
-</section>
-
-<!-- ============ Live 1: model e integridade ============ -->
-
-<section>
-  <h2>models.py — o model Book</h2>
-  <pre><code class="language-python" data-trim>
-class Book(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    title: str = Field(max_length=200)
-    pages: int
-    user_id: int = Field(foreign_key="user.id")
-    created_at: datetime = Field(default_factory=datetime.now)
-
-    user: User | None = Relationship(back_populates="books")
-  </code></pre>
-  <ul style="font-size:.58em">
-    <li><code>pages: int</code> — sem <code>Field(...)</code>: nada a configurar, a anotação basta;</li>
-    <li><code>foreign_key="user.id"</code> — a string é <code>"tabela.coluna"</code>, nomes do <strong>banco</strong>: a linha <code>FOREIGN KEY ... REFERENCES</code> do quadro. É uma coluna comum, com uma configuração a mais;</li>
-    <li>Convenções (ADR-0002): tabela no singular (do nome da classe), FK <code>&lt;tabela&gt;_id</code>, datetime com <code>_at</code>.</li>
-  </ul>
-</section>
-
-<section>
-  <h2>Relationship — os dois lados da relação</h2>
-  <pre><code class="language-python" data-trim>
-class User(SQLModel, table=True):
-    # ...colunas da aula 04...
-    books: list["Book"] = Relationship(back_populates="user")
-
-
-class Book(SQLModel, table=True):
-    # ...colunas...
-    user: User | None = Relationship(back_populates="books")
-  </code></pre>
-  <ul style="font-size:.56em">
-    <li><code>Relationship</code> <strong>não vira coluna</strong> — existe só no mundo Python. O <code>F</code> de <code>Field</code> configura coluna; o <code>R</code> de <code>Relationship</code> não gera nenhuma;</li>
-    <li>É a relação como objetos navegáveis: <code>user.books</code> é uma lista de <code>Book</code>; <code>book.user</code> é o dono;</li>
-    <li><code>"Book"</code> entre aspas: quando o <code>User</code> é lido, a classe <code>Book</code> ainda não existe — o Python resolve o nome depois;</li>
-    <li><code>back_populates</code>: os dois atributos são <strong>a mesma relação</strong>, vista de cada lado;</li>
-    <li>A FK é a relação na língua do banco; o <code>Relationship</code>, na língua dos objetos — o ORM traduz.</li>
-  </ul>
-  <p class="cite">Documentação oficial do SQLModel — sqlmodel.tiangolo.com</p>
-</section>
-
-<section>
-  <h2>create_all cria só o que falta</h2>
-  <pre><code class="language-bash" data-trim>
-uvicorn main:app --reload
-  </code></pre>
-  <ul style="font-size:.65em">
-    <li>Nenhuma linha nova no <code>main.py</code> — o <code>create_all</code> da aula 04 já varre o metadata da <code>Base</code>;</li>
-    <li>No echo: <code>user</code> <strong>já existe</strong> e fica intocada; o <strong><code>CREATE TABLE book (...)</code></strong> sai completo, com a <code>FOREIGN KEY</code>;</li>
-    <li>Conferir no mysql: <code>SHOW TABLES;</code> e <code>SHOW CREATE TABLE book;</code> — o DDL gerado, a constraint nomeada (<code>book_ibfk_1</code>) e o <code>ENGINE=InnoDB</code>.</li>
-  </ul>
-</section>
-
-<section>
-  <h2>Integridade referencial ao vivo</h2>
-  <pre><code class="language-sql" data-trim>
-INSERT INTO book (title, pages, user_id)
-VALUES ('Dom Casmurro', 208, 999);
--- ERROR 1452: a foreign key constraint fails
-
-INSERT INTO book (title, pages, user_id)
-VALUES ('Dom Casmurro', 208, 1);   -- ok
-
-DELETE FROM user WHERE id = 1;
--- ERROR 1451: a foreign key constraint fails
-  </code></pre>
-  <ul style="font-size:.6em">
-    <li>O <strong>1452</strong> recusa o órfão; o <strong>1451</strong> protege o pai — e ninguém escreveu um <code>if</code>;</li>
-    <li>Guarde a cena: ela volta pela API daqui a pouco.</li>
-  </ul>
-</section>
-
-<!-- ============ Teoria: rotas aninhadas ============ -->
-
-<section>
-  <h2>O mapa REST da aula 03 se cumpre</h2>
-  <img src="img/rotas-books.png" alt="Mapa das rotas de Books: coleção aninhada em /users/{user_id}/books, item plano em /books/{book_id}" style="width:100%;max-width:740px">
-</section>
-
-<section>
-  <h2>A URI conta a relação</h2>
-  <ul style="font-size:.62em">
-    <li>O caminho de uma URI é <strong>hierárquico</strong> por definição (RFC 3986, seção 3.3): <code>/users/1/books</code> lê-se "os books <em>do user 1</em>";</li>
-    <li>A relação 1:N aparece em duas camadas do sistema: chave estrangeira no banco, hierarquia na URL;</li>
-    <li><strong>Coleção aninhada:</strong> listar e criar acontecem na coleção do dono — criar um book sem dizer de quem ele é não faria sentido;</li>
-    <li><strong>Item plano:</strong> <code>/books/{book_id}</code> — o id identifica sozinho; sempre <code>book_id</code> (ADR-0002). A aula 06 pendura aqui o <code>/progress</code>;</li>
-    <li>O prefixo <code>/api</code> se aposenta com a lista em memória — <code>/signup</code> (aula 04) inaugurou o padrão definitivo.</li>
-  </ul>
-  <p class="cite">RFC 3986 — Uniform Resource Identifier (URI): Generic Syntax, IETF, 2005</p>
-</section>
-
-<section>
-  <h2>A falha deliberada: quem chama escolhe o user_id</h2>
-  <ul style="font-size:.7em">
-    <li>Não há autenticação: qualquer pessoa lê e escreve os livros de <strong>qualquer</strong> usuário — basta trocar o número na URL;</li>
-    <li>É deliberado (<strong>ADR-0001</strong>): a aula 09 abre <em>demonstrando esse ataque</em>, e ele motiva o JWT;</li>
-    <li>O aluno atento da aula 03 já tinha percebido — hoje a previsão vira código.</li>
-  </ul>
-  <div class="nota">No quadro, ao lado da senha em texto puro: <strong>"dívida: user_id na URL, sem autenticação"</strong>.</div>
-</section>
-
-<!-- ============ Live 2: o CRUD ============ -->
-
-<section>
-  <h2>A demolição: adeus, lista em memória</h2>
+  <h2>Chave estrangeira: constraint, não convenção</h2>
   <ul style="font-size:.68em">
-    <li>O código em memória das aulas 02–03 foi <strong>andaime</strong>: ensinou rotas, verbos e status codes sem o peso do banco;</li>
-    <li>Saem do <code>main.py</code>: a lista <code>books</code>, o contador <code>next_book_id</code>, as cinco rotas <code>/api/books</code> e os schemas antigos de Book;</li>
-    <li>Ficam: imports, <code>create_all</code>, <code>app</code>, schemas de User, <code>/health</code>, <code>/signup</code>;</li>
-    <li>O <code>--reload</code> denuncia o que escapar — o traceback é o guia da demolição.</li>
+    <li>A <strong>foreign key</strong> mora no lado N: <code>books.user_id</code> guarda a chave primária do lado 1 (<code>users.id</code>) — cada livro tem <em>um</em> dono, a resposta cabe numa coluna;</li>
+    <li><strong>Integridade referencial:</strong> o MySQL <strong>recusa</strong> um <code>user_id</code> que não exista em <code>users.id</code> — livro órfão não entra;</li>
+    <li><strong>NOT NULL por decisão de domínio:</strong> não existe livro sem dono neste sistema;</li>
+    <li>Constraint é regra de negócio que o banco defende sozinho — como o <code>UNIQUE</code> e o <code>NOT NULL</code> já vistos.</li>
+  </ul>
+  <p class="cite">DATE, C. J. — An Introduction to Database Systems, 8ª ed., 2003</p>
+</section>
+
+<section>
+  <h2 style="font-size:1.1em"><span class="recap">Recapitulando — relação 1:N</span></h2>
+  <ul style="font-size:.8em">
+    <li>Entidades se ligam por relacionamentos com cardinalidade (Chen, 1976);</li>
+    <li>1:N no relacional = chave estrangeira no lado N apontando para o lado 1;</li>
+    <li>O banco defende a relação: integridade referencial;</li>
+    <li><code>NOT NULL</code> na FK: todo livro tem dono, por regra de domínio.</li>
+  </ul>
+</section>
+
+<!-- ============ Live 1: User, FK e signup ============ -->
+
+<section>
+  <h2>Senha não se armazena — armazena-se o hash</h2>
+  <pre><code class="language-bash" data-trim>
+pip install bcrypt
+pip freeze &gt; requirements.txt
+  </code></pre>
+  <ul style="font-size:.65em">
+    <li><strong>bcrypt</strong> (Provos &amp; Mazières, USENIX 1999): função de <strong>mão única</strong> — do hash não se recupera a senha;</li>
+    <li><strong>Salt embutido:</strong> duas senhas iguais geram hashes diferentes — tabelas pré-computadas não funcionam;</li>
+    <li><strong>Custo ajustável:</strong> lento de propósito, para inviabilizar força bruta;</li>
+    <li>No login, calcula-se o hash do que foi digitado e <strong>comparam-se os hashes</strong>.</li>
+  </ul>
+  <p class="cite">PROVOS, N.; MAZIÈRES, D. — A Future-Adaptable Password Scheme, USENIX, 1999</p>
+</section>
+
+<section>
+  <h2>models.py — o User e a chave estrangeira</h2>
+  <pre><code class="language-python" data-trim>
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+    password: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class Book(Base):
+    __tablename__ = "books"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+  </code></pre>
+  <ul style="font-size:.55em">
+    <li><code>email</code> com <code>unique=True</code> — o banco recusa dois cadastros com o mesmo e-mail;</li>
+    <li><code>password</code> guarda <strong>o hash</strong>, nunca a senha;</li>
+    <li><code>ForeignKey("users.id")</code> — <em>tabela.coluna</em>, os nomes do banco; sem <code>| None</code>, a coluna é <code>NOT NULL</code>: <strong>não existe livro sem dono</strong>.</li>
   </ul>
 </section>
 
 <section>
-  <h2>Os schemas novos de Book</h2>
+  <h2>Recriar as tabelas</h2>
+  <pre><code class="language-sql" data-trim>
+DROP TABLE books;
+-- suba o uvicorn e leia o echo: CREATE TABLE users, depois books
+SHOW CREATE TABLE books;
+  </code></pre>
+  <ul style="font-size:.65em">
+    <li>O model mudou e o <code>create_all</code> <strong>não altera</strong> tabela existente — dado de aula é descartável;</li>
+    <li>Os dois <code>CREATE TABLE</code> saem <strong>na ordem certa</strong>: <code>users</code> primeiro, porque <code>books</code> o referencia;</li>
+    <li>Na saída do <code>SHOW CREATE TABLE</code>: <code>FOREIGN KEY (user_id) REFERENCES users (id)</code> — o ORM declarou a constraint da teoria.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>A senha entra, mas nunca sai</h2>
   <pre><code class="language-python" data-trim>
-class BookCreate(SQLModel):
-    title: str
-    pages: int
+class UserCreate(BaseModel):
+    name: str
+    email: str
+    password: str
 
 
-class BookRead(SQLModel):
+class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
-    title: str
-    pages: int
-    user_id: int
+    name: str
+    email: str
   </code></pre>
   <ul style="font-size:.6em">
-    <li><code>title</code> e <code>pages</code> — os campos do domínio; o total de páginas alimenta a porcentagem da aula 06;</li>
-    <li><code>BookRead</code> segue a nomenclatura de <code>UserRead</code> — e evita colidir com <code>models.Book</code>;</li>
-    <li><strong>Sem <code>table=True</code></strong>: mesma classe-mãe do model, papel diferente — schema não é tabela;</li>
-    <li><code>user_id</code> na saída: <strong>a posse aparece na resposta</strong>.</li>
+    <li>A senha existe no <code>UserCreate</code> e <strong>não existe</strong> no <code>UserRead</code> — nem o hash;</li>
+    <li>É o caso mais forte de <code>response_model</code> do projeto: <strong>o contrato de saída é o filtro</strong>.</li>
   </ul>
 </section>
 
 <section>
-  <h2>POST /users/{user_id}/books — o 500 anunciado</h2>
+  <h2>security.py — o hash na frente do banco</h2>
   <pre><code class="language-python" data-trim>
-@app.post("/users/{user_id}/books", response_model=BookRead,
-          status_code=201)
-def create_book(user_id: int, book: BookCreate,
-                session: Session = Depends(get_session)):
-    new_book = models.Book(title=book.title, pages=book.pages,
-                           user_id=user_id)
+import bcrypt
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode(), hashed.encode())
+  </code></pre>
+  <ul style="font-size:.6em">
+    <li><code>gensalt()</code> gera o salt; <code>hashpw</code> devolve o hash <strong>com o salt embutido</strong> — não há coluna de salt;</li>
+    <li><code>checkpw</code> refaz o hash da senha digitada e compara — a verificação de mão única;</li>
+    <li>Segurança ganha arquivo próprio, como a conexão ganhou o <code>database.py</code> (ADR-0002).</li>
+  </ul>
+</section>
+
+<section>
+  <h2>POST /signup</h2>
+  <pre><code class="language-python" data-trim>
+@app.post("/signup", response_model=UserRead, status_code=201)
+def signup(user: UserCreate, session: Session = Depends(get_session)):
+    statement = select(models.User).where(models.User.email == user.email)
+    existing_user = session.scalars(statement).first()
+    if existing_user is not None:
+        raise HTTPException(status_code=409, detail="Email already registered")
+    new_user = models.User(name=user.name, email=user.email,
+                           password=hash_password(user.password))
+    session.add(new_user)
+    session.commit()
+    session.refresh(new_user)
+    return new_user
+  </code></pre>
+  <ul style="font-size:.55em">
+    <li>E-mail repetido → <strong>409 Conflict</strong>: o pedido é válido, mas conflita com o estado do recurso;</li>
+    <li>Duas requisições simultâneas com o mesmo e-mail? Ambas passam pelo <code>if</code> — a última defesa é o <code>UNIQUE</code> no banco;</li>
+    <li>No <code>SELECT</code> do mysql: <code>$2b$12$...</code> — e senhas iguais com hashes <strong>diferentes</strong> (o salt trabalhando).</li>
+  </ul>
+</section>
+
+<!-- ============ T-8 Autenticação ============ -->
+
+<section>
+  <h2>O HTTP tem amnésia</h2>
+  <ul style="font-size:.7em">
+    <li>O HTTP é <em>stateless</em>: cada requisição chega sozinha, sem memória da anterior;</li>
+    <li>O usuário fez login às 10h; às 10h01, o servidor já não sabe quem ele é;</li>
+    <li>Toda autenticação web é uma resposta a essa amnésia — a diferença entre as soluções é <strong>onde mora o estado</strong>.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Cookies + sessions — o estado no servidor</h2>
+  <ul style="font-size:.68em">
+    <li><strong>Origem:</strong> o cookie foi criado por <strong>Lou Montulli</strong> (Netscape, 1994) e padronizado na RFC 6265 (2011);</li>
+    <li>No login, o servidor cria um registro de <strong>sessão</strong> e devolve um cookie com o <em>id</em> dessa sessão;</li>
+    <li>O navegador reenvia o cookie sozinho a cada requisição;</li>
+    <li>O estado mora <strong>no servidor</strong>: o cookie é só a chave do armário.</li>
+  </ul>
+  <p class="cite">RFC 6265 — HTTP State Management Mechanism, IETF, 2011</p>
+</section>
+
+<section>
+  <h2>Tokens — o estado viaja com o cliente</h2>
+  <ul style="font-size:.68em">
+    <li>No login, o servidor emite um <strong>token autocontido</strong> — e não guarda nada;</li>
+    <li>O cliente o guarda e o envia <strong>explicitamente</strong> no header <code>Authorization: Bearer &lt;token&gt;</code>;</li>
+    <li>A cada requisição, o servidor <strong>verifica</strong> o token — em vez de consultar um armário de sessões;</li>
+    <li><em>Bearer</em>: token "ao portador" — quem o carrega, é. Por isso não se compartilha.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Cookie + session × token</h2>
+  <table class="status-tab">
+    <tr><th></th><th>Cookie + session</th><th>Token (JWT)</th></tr>
+    <tr><td>Onde mora o estado</td><td>no servidor (armário de sessões)</td><td>no próprio token</td></tr>
+    <tr><td>O que o cliente guarda</td><td>id de sessão (cookie)</td><td>o token inteiro</td></tr>
+    <tr><td>Como viaja</td><td>cookie, automático pelo navegador</td><td>header <code>Authorization</code>, explícito</td></tr>
+    <tr><td>Revogação</td><td>imediata (apaga a sessão)</td><td>difícil — vale até expirar</td></tr>
+    <tr><td>Vocação</td><td>aplicações renderizadas no servidor</td><td>APIs consumidas por SPAs e apps</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>JWT — JSON Web Token</h2>
+  <p class="definicao">"Um meio compacto e seguro para URLs de representar claims a serem transferidos entre duas partes."</p>
+  <ul style="font-size:.65em;margin-top:.8em">
+    <li><strong>Origem:</strong> padronizado pela IETF na <strong>RFC 7519</strong> (2015);</li>
+    <li><strong>Claim:</strong> uma afirmação sobre o portador — <code>sub</code> (quem é), <code>exp</code> (até quando vale), <code>iat</code> (quando foi emitido);</li>
+    <li>Três partes separadas por ponto: <code>header.payload.signature</code>.</li>
+  </ul>
+  <p class="cite">RFC 7519 — JSON Web Token (JWT), IETF, 2015</p>
+</section>
+
+<section>
+  <h2>A anatomia de um JWT</h2>
+  <img src="img/anatomia-jwt.png" alt="As três partes de um JWT: header com o algoritmo, payload com os claims sub e exp, e a assinatura HMAC-SHA256" style="width:100%;max-width:760px">
+</section>
+
+<section>
+  <h2>Assinado, não cifrado</h2>
+  <ul style="font-size:.68em">
+    <li>Base64url é <strong>codificação</strong>, não criptografia: qualquer um decodifica e lê header e payload (demonstração em <strong>jwt.io</strong>);</li>
+    <li>A assinatura garante <strong>integridade e origem</strong>: alterou um caractere, o HMAC não bate e o token é recusado;</li>
+    <li>Só quem tem a <code>SECRET_KEY</code> produz uma assinatura válida — ler é permitido, <strong>forjar não</strong>;</li>
+    <li>Consequência: <strong>nunca</strong> colocar senha ou dado sensível no payload.</li>
+  </ul>
+  <p class="cite">RFC 7519 — JSON Web Token (JWT), IETF, 2015</p>
+</section>
+
+<section>
+  <h2>Por que JWT nesta aplicação</h2>
+  <ul style="font-size:.68em">
+    <li>O backend é uma <strong>API</strong> que servirá um frontend React: cliente e servidor conversam por requisições explícitas, e o token viaja no header <code>Authorization</code>;</li>
+    <li><strong>Sem sessão no servidor:</strong> qualquer instância da API valida o token só com a chave secreta — não há armário de sessões para consultar nem sincronizar;</li>
+    <li><strong>O custo do stateless:</strong> um JWT emitido não pode ser "apagado" — vale até o <code>exp</code>. Por isso tokens têm vida curta;</li>
+    <li>Cookies+sessions seguem excelentes para aplicações renderizadas no servidor — a escolha aqui é <strong>pela arquitetura do projeto</strong>, não por moda.</li>
+  </ul>
+</section>
+
+<section>
+  <h2 style="font-size:1.1em"><span class="recap">Recapitulando — autenticação</span></h2>
+  <ul style="font-size:.75em">
+    <li>HTTP é stateless; autenticar é responder à amnésia;</li>
+    <li>Cookies+sessions: estado no servidor. Tokens: estado no próprio token;</li>
+    <li>JWT (RFC 7519): <code>header.payload.signature</code> — legível, mas infalsificável sem a chave;</li>
+    <li>Claims <code>sub</code> e <code>exp</code>: quem é, até quando;</li>
+    <li>API + SPA → token no header <code>Authorization: Bearer</code>.</li>
+  </ul>
+</section>
+
+<!-- ============ Live 2: login, token, dono ============ -->
+
+<section>
+  <h2>Emitir tokens — PyJWT</h2>
+  <pre><code class="language-bash" data-trim>
+pip install pyjwt
+pip freeze &gt; requirements.txt
+  </code></pre>
+  <pre><code class="language-python" data-trim>
+SECRET_KEY = "change-me-in-production-32-bytes-min!"
+ALGORITHM = "HS256"
+TOKEN_LIFETIME = timedelta(hours=2)
+
+
+def create_access_token(user_id: int) -> str:
+    payload = {
+        "sub": str(user_id),
+        "exp": datetime.now(timezone.utc) + TOKEN_LIFETIME,
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+  </code></pre>
+  <ul style="font-size:.55em">
+    <li><code>SECRET_KEY</code> — quem a tem, emite tokens válidos. Em produção: variável de ambiente, nunca o código. Mínimo de <strong>32 bytes</strong> para o HMAC-SHA256 (RFC 7518);</li>
+    <li><code>TOKEN_LIFETIME</code> — o <code>exp</code>: a resposta ao problema da revogação;</li>
+    <li><code>sub</code> vai como texto, por exigência da RFC.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>get_current_user — a dependency de identidade</h2>
+  <pre><code class="language-python" data-trim>
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    session: Session = Depends(get_session),
+) -> models.User:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY,
+                             algorithms=[ALGORITHM])
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    user = session.get(models.User, int(payload["sub"]))
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+  </code></pre>
+  <ul style="font-size:.55em">
+    <li>Uma dependency como <code>get_session</code> — a rota declara e recebe <strong>o usuário logado, pronto</strong>;</li>
+    <li><code>jwt.decode</code> valida assinatura <em>e</em> expiração numa chamada;</li>
+    <li><strong>401</strong> é "quem é você?" — 403 ("sei quem é, não pode") é assunto de autorização, adiante no curso.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>POST /login — credenciais viram token</h2>
+  <pre><code class="language-python" data-trim>
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+@app.post("/login", response_model=TokenResponse)
+def login(credentials: LoginRequest, session: Session = Depends(get_session)):
+    statement = select(models.User).where(models.User.email == credentials.email)
+    user = session.scalars(statement).first()
+    if user is None or not verify_password(credentials.password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return TokenResponse(access_token=create_access_token(user.id))
+  </code></pre>
+  <ul style="font-size:.55em">
+    <li><code>verify_password</code> fecha o ciclo do bcrypt: hash digitado × hash guardado;</li>
+    <li><strong>Uma única mensagem</strong> para e-mail inexistente e senha errada — não entregar a lista de quem tem conta;</li>
+    <li>Cole o token em <strong>jwt.io</strong>: payload legível, assinatura só com a chave.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>O ciclo completo</h2>
+  <img src="img/fluxo-jwt.png" alt="Fluxo do JWT: o login troca credenciais por um token assinado; cada requisição envia o token, a dependency verifica e a rota opera sobre o usuário logado" style="width:100%;max-width:760px">
+</section>
+
+<section>
+  <h2>O CRUD ganha dono — listar e criar</h2>
+  <pre><code class="language-python" data-trim>
+@app.get("/api/books", response_model=list[BookRead])
+def list_books(name: str = "", session: Session = Depends(get_session),
+               current_user: models.User = Depends(get_current_user)):
+    statement = select(models.Book).where(models.Book.user_id == current_user.id)
+    if name != "":
+        statement = statement.where(models.Book.name.contains(name))
+    return session.scalars(statement).all()
+
+
+@app.post("/api/books", response_model=BookRead, status_code=201)
+def create_book(book: BookCreate, session: Session = Depends(get_session),
+                current_user: models.User = Depends(get_current_user)):
+    new_book = models.Book(name=book.name, user_id=current_user.id)
     session.add(new_book)
     session.commit()
     session.refresh(new_book)
     return new_book
   </code></pre>
-  <ul style="font-size:.6em">
-    <li>O trio <code>add</code>/<code>commit</code>/<code>refresh</code> do signup — a novidade é o <code>user_id</code> vindo <strong>do path</strong>, direto para a FK;</li>
-    <li><code>POST /users/1/books</code> → <strong>201</strong>; <code>POST /users/999/books</code> → <strong>500</strong>: o ERROR 1452, agora pela API.</li>
+  <ul style="font-size:.55em">
+    <li>No <code>where(user_id == current_user.id)</code>, <strong>a FK e o token se encontram</strong>;</li>
+    <li>No POST, o dono vem <strong>do token, nunca do corpo</strong> — se viesse do corpo, qualquer um cadastraria em nome de qualquer um.</li>
   </ul>
 </section>
 
 <section>
-  <h2>Correção: 404 para o pai que não existe</h2>
+  <h2>Livro alheio não existe: 404</h2>
   <pre><code class="language-python" data-trim>
-    user = session.get(models.User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-  </code></pre>
-  <ul style="font-size:.62em">
-    <li>O recurso pai da URI — o user 999 — não existe: <strong>404</strong>, pela tabela de status da aula 02;</li>
-    <li>Novidade: <strong><code>session.get(Model, pk)</code></strong> — busca por chave primária, o caminho curto quando se tem o id (<code>select().where()</code> segue para as demais colunas);</li>
-    <li>O banco continua de guarda — defesa em profundidade, como o <code>UNIQUE</code> e o <code>if</code> do e-mail.</li>
-  </ul>
-</section>
-
-<section>
-  <h2>GET — o relationship em ação</h2>
-  <pre><code class="language-python" data-trim>
-@app.get("/users/{user_id}/books", response_model=list[BookRead])
-def list_books(user_id: int, session: Session = Depends(get_session)):
-    user = session.get(models.User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user.books
-  </code></pre>
-  <ul style="font-size:.6em">
-    <li><code>user.books</code> — nenhuma consulta escrita à mão: ao acessar o atributo, o ORM emite o SELECT (<strong>lazy loading</strong> — confira no echo);</li>
-    <li>Sem o <code>if</code>, <code>/users/999/books</code> devolveria <strong>200 com <code>[]</code></strong> — uma mentira: "user sem livros" e "user inexistente" ficariam indistinguíveis;</li>
-    <li>O 404 aqui não trata erro do banco: trata a <strong>semântica</strong>.</li>
-  </ul>
-</section>
-
-<section>
-  <h2>PUT — o UPDATE que ninguém escreve</h2>
-  <pre><code class="language-python" data-trim>
-@app.put("/books/{book_id}", response_model=BookRead)
-def update_book(book_id: int, book: BookCreate,
-                session: Session = Depends(get_session)):
-    stored_book = session.get(models.Book, book_id)
-    if stored_book is None:
-        raise HTTPException(status_code=404, detail="Book not found")
-    stored_book.title = book.title
-    stored_book.pages = book.pages
-    session.commit()
-    session.refresh(stored_book)
-    return stored_book
-  </code></pre>
-  <ul style="font-size:.58em">
-    <li>Não existe <code>session.update()</code>: o objeto veio da sessão — <strong>mudar os atributos basta</strong>;</li>
-    <li>O <em>Unit of Work</em> (aula 04) rastreia as mudanças; o <code>commit</code> emite o <code>UPDATE</code> sozinho — confira no echo.</li>
-  </ul>
-  <p class="cite">FOWLER, M. — Patterns of Enterprise Application Architecture, 2002</p>
-</section>
-
-<section>
-  <h2>GET e DELETE do item — session.get de novo</h2>
-  <pre><code class="language-python" data-trim>
-@app.get("/books/{book_id}", response_model=BookRead)
-def read_book(book_id: int, session: Session = Depends(get_session)):
+@app.get("/api/books/{book_id}", response_model=BookRead)
+def read_book(book_id: int, session: Session = Depends(get_session),
+              current_user: models.User = Depends(get_current_user)):
     book = session.get(models.Book, book_id)
-    if book is None:
+    if book is None or book.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Book not found")
     return book
-
-
-@app.delete("/books/{book_id}", status_code=204)
-def delete_book(book_id: int, session: Session = Depends(get_session)):
-    book = session.get(models.Book, book_id)
-    if book is None:
-        raise HTTPException(status_code=404, detail="Book not found")
-    session.delete(book)
-    session.commit()
   </code></pre>
-  <ul style="font-size:.58em">
-    <li><code>session.delete</code> anota a remoção; o <code>commit</code> a executa;</li>
-    <li><strong>204 sem corpo</strong>, como na aula 03 — o contrato não mudou, só a prateleira.</li>
+  <ul style="font-size:.6em">
+    <li>PUT e DELETE seguem o mesmo desenho: buscar pela chave, conferir o dono, agir;</li>
+    <li><strong>404, não 403:</strong> a API não confirma a existência de um recurso que não é seu — livro alheio e livro inexistente são indistinguíveis para quem pede;</li>
+    <li><code>/health</code> continua público: rota de infraestrutura, não de dados.</li>
   </ul>
 </section>
 
 <section>
-  <h2>O dado que sobrevive — agora de verdade</h2>
-  <ul style="font-size:.7em">
-    <li>Cadastre books pelo Swagger, derrube o uvicorn, suba de novo;</li>
-    <li><code>GET /users/1/books</code>: <strong>os livros continuam lá</strong>;</li>
-    <li>Não existe mais "lista de fábrica": Users e Books moram no MySQL;</li>
-    <li>A fraqueza aberta na aula 02 fecha oficialmente hoje — e o <code>/docs</code> exibe exatamente o mapa REST do quadro.</li>
-  </ul>
+  <h2>A prova com dois usuários</h2>
+  <ol style="font-size:.68em">
+    <li>Sem token: <code>GET /api/books</code> → <strong>401</strong>;</li>
+    <li>Login com o primeiro usuário, token no <strong>Authorize</strong> do Swagger, dois livros criados;</li>
+    <li>Login com a segunda usuária, <strong>troque o token</strong>: <code>GET /api/books</code> → <strong>lista vazia</strong>;</li>
+    <li>Com o token dela, <code>GET /api/books/1</code> (livro do outro) → <strong>404</strong> — idem PUT e DELETE;</li>
+    <li>No mysql, <code>SELECT id, name, user_id FROM books;</code>: as linhas de cada dono lado a lado — e o Swagger mostrando só as do token ativo.</li>
+  </ol>
 </section>
 
 <!-- ============ Exercício e fechamento ============ -->
 
 <section>
-  <h2>Exercício — a busca que ficou para trás</h2>
-  <ol style="font-size:.65em">
-    <li>Na aula 02, <code>?name=hobbit</code> filtrava a lista em memória; a busca se perdeu na demolição;</li>
-    <li>Adicione à listagem o query param opcional <code>title: str = ""</code>;</li>
-    <li>Vazio → <code>user.books</code>; senão, <code>select(models.Book)</code> com <strong>duas condições</strong> no <code>where</code>: o dono e <code>models.Book.title.contains(title)</code>;</li>
-    <li>Execute com <code>session.exec(...).all()</code> — o irmão do <code>.first()</code> da aula 04;</li>
-    <li>Teste <code>?title=dom</code> e confira no echo: que operador SQL apareceu?</li>
+  <h2>Exercício em sala</h2>
+  <ol style="font-size:.7em">
+    <li>Crie <code>GET /api/users/me</code>, que devolve <strong>o usuário logado</strong> no formato <code>UserRead</code>;</li>
+    <li>Teste com o token de cada usuário — a resposta muda com o token, sem parâmetro na URL;</li>
+    <li>Teste sem token → 401.</li>
   </ol>
-  <div class="nota">Exercício descartável: a branch da disciplina segue <strong>sem</strong> a busca — desfazer ao final. A aula 06 parte da listagem original.</div>
+  <div class="nota">O corpo da rota tem uma linha: a dependency já fez todo o trabalho — identidade virou <strong>infraestrutura</strong>. Atenção ao <code>response_model</code>: é ele que impede o hash da senha de sair na resposta.</div>
 </section>
 
 <section>
   <h2>Síntese da aula</h2>
   <ul style="font-size:.62em">
-    <li>Relação <strong>1:N</strong>: um pai, muitos filhos — cardinalidades do modelo ER (Chen, 1976);</li>
-    <li>A <strong>chave estrangeira</strong> materializa a relação e mora no lado N (Date); a <strong>integridade referencial</strong> recusa órfãos e protege pais — ERROR 1452 e 1451;</li>
-    <li>No SQLModel: <code>Field(foreign_key=...)</code> declara a coluna; <code>Relationship</code>/<code>back_populates</code> dão à relação a forma de objetos (<code>user.books</code>, lazy loading);</li>
-    <li>O CRUD de Books renasceu sobre o MySQL: coleção aninhada no dono, item plano, <code>session.get</code> por chave primária, <code>UPDATE</code> emitido pelo <em>Unit of Work</em>;</li>
-    <li>Segunda dívida no quadro: <strong>user_id na URL, sem autenticação</strong> (ADR-0001 → aula 09).</li>
-  </ul>
-</section>
-
-<section>
-  <h2>Próxima aula: Reading Updates</h2>
-  <p style="font-size:.75em">Um Book cadastrado ainda é uma foto parada — 208 páginas, e daí? A pergunta que o projeto existe para responder: <em>"em que página você está?"</em></p>
-  <ul style="font-size:.7em">
-    <li>Model <strong>Reading Update</strong>: a segunda relação 1:N — desta vez o pai é o Book;</li>
-    <li><code>POST /books/{book_id}/progress</code>, no endereço plano que deixamos pronto hoje;</li>
-    <li>A <strong>porcentagem de leitura</strong> derivada do update mais recente — sem campo de status gravado.</li>
+    <li>A relação 1:N (Chen, 1976) vira uma coluna com chave estrangeira — <code>books.user_id</code> — defendida pelo banco: não existe livro sem dono;</li>
+    <li>Senha não se armazena: armazena-se o <strong>hash</strong> (bcrypt — mão única, salt, custo);</li>
+    <li>HTTP é stateless: cookies+sessions guardam o estado no servidor; <strong>tokens o carregam consigo</strong>;</li>
+    <li>JWT (RFC 7519) é assinado, não cifrado: <code>header.payload.signature</code>, claims <code>sub</code> e <code>exp</code> — a assinatura impede a falsificação;</li>
+    <li>O login emite; a dependency <code>get_current_user</code> verifica; o CRUD opera <strong>sobre os livros do usuário logado</strong> — dono vem do token, nunca do corpo.</li>
   </ul>
 </section>
 
 <section>
   <h2>Referências</h2>
-  <ul style="font-size:.55em">
-    <li>CODD, E. F. <em>A Relational Model of Data for Large Shared Data Banks</em>. Communications of the ACM, 1970. (relações ligadas por valores, não por ponteiros)</li>
-    <li>CHEN, P. <em>The Entity-Relationship Model — Toward a Unified View of Data</em>. ACM Transactions on Database Systems, 1976. (entidades, relacionamentos e cardinalidades)</li>
+  <ul style="font-size:.52em">
+    <li>CHEN, P. <em>The Entity-Relationship Model — Toward a Unified View of Data</em>. ACM TODS, 1976. (entidades, relacionamentos e cardinalidades)</li>
     <li>DATE, C. J. <em>An Introduction to Database Systems</em>. 8ª ed., Addison-Wesley, 2003. (chave estrangeira e integridade referencial)</li>
-    <li>FOWLER, M. <em>Patterns of Enterprise Application Architecture</em>. Addison-Wesley, 2002. (Unit of Work, lazy loading)</li>
-    <li>RFC 3986 — <em>Uniform Resource Identifier (URI): Generic Syntax</em>. IETF, 2005. (hierarquia do caminho)</li>
-    <li>Documentação oficial do SQLModel — sqlmodel.tiangolo.com. (Relationship e rotas aninhadas)</li>
-    <li>Documentação oficial do MySQL — dev.mysql.com/doc. (chaves estrangeiras no InnoDB)</li>
-    <li>Documentação oficial do FastAPI — fastapi.tiangolo.com.</li>
+    <li>PROVOS, N.; MAZIÈRES, D. <em>A Future-Adaptable Password Scheme</em>. USENIX, 1999. (o bcrypt)</li>
+    <li>RFC 6265 — <em>HTTP State Management Mechanism</em>. IETF, 2011. (cookies)</li>
+    <li>RFC 7519 — <em>JSON Web Token (JWT)</em>. IETF, 2015.</li>
+    <li>OWASP. <em>JSON Web Token Cheat Sheet</em> e <em>Authentication Cheat Sheet</em> — cheatsheetseries.owasp.org.</li>
+    <li>Documentação oficial do PyJWT — pyjwt.readthedocs.io.</li>
+    <li>Documentação oficial do SQLAlchemy — docs.sqlalchemy.org (ForeignKey).</li>
   </ul>
 </section>
 
